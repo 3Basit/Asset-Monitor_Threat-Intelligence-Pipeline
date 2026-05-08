@@ -32,34 +32,26 @@ ALERT_LEVELS = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 def compute_tpf(record):
     score = 0.0
 
-    # CVSS score
     cvss = record.get("cvss_score")
     if cvss is not None:
         if cvss >= 9.0:   score += 0.20
         elif cvss >= 7.0: score += 0.13
         elif cvss >= 4.0: score += 0.07
 
-    # EPSS score
     epss = record.get("epss_score")
     if epss is not None:
         if epss >= 0.7:   score += 0.20
         elif epss >= 0.4: score += 0.13
         elif epss >= 0.1: score += 0.07
 
-    # KEV presence — confirmed exploited in the wild
-    score += 0.13
+    score += 0.13  # KEV presence
 
-    # Known ransomware campaigns
     if record.get("known_ransomware"):
         score += 0.07
 
-    # Vulnerability type
     score += VULN_TYPE_WEIGHTS.get(record.get("vuln_type", "unknown"), 0.0)
-
-    # Business criticality
     score += CRITICALITY_WEIGHTS.get(record.get("business_criticality", "low"), 0.0)
 
-    # Recency of KEV addition
     try:
         date_added = datetime.strptime(record["date_added"], "%Y-%m-%d")
         days_since = (datetime.now() - date_added).days
@@ -69,9 +61,14 @@ def compute_tpf(record):
     except Exception:
         pass
 
-    # Version confirmation bonus — Nmap-detected version matches CVE
-    if record.get("version_confirmed"):
+    # Version confirmation bonus — only for CPE-range confirmed (high confidence)
+    # text_search confirmation does NOT add bonus (medium confidence only)
+    if record.get("version_confirmed") and record.get("confirmation_method") == "cpe_range":
         score += 0.05
+
+    # Public exploit bonus
+    if record.get("has_public_exploit"):
+        score += 0.10
 
     threat_score           = round(min(score, 1.0), 2)
     threat_pressure_factor = round(1.0 + threat_score, 2)
@@ -86,7 +83,6 @@ def get_alert_level(tpf):
 
 
 def run_threat_pressure():
-    # ── Read from DB ──────────────────────────────────────────
     matches = get_matched_cves()
 
     if not matches:
@@ -94,9 +90,7 @@ def run_threat_pressure():
         with open("matched_cves.json") as f:
             matches = json.load(f)
 
-    # ── Previous state from DB (replaces previous_state.json) ─
     previous_state = get_previous_ti_state()
-
     output = []
     alerts = []
 
@@ -118,8 +112,7 @@ def run_threat_pressure():
         except Exception:
             days_since_kev_added = None
 
-        # ── Pull WAF info for this asset from DB ──────────────
-        waf_info    = get_asset_waf_info(m["asset_id"])
+        waf_info      = get_asset_waf_info(m["asset_id"])
         is_behind_waf = waf_info["is_behind_waf"]
         waf_name      = waf_info["waf_name"]
 
@@ -152,14 +145,16 @@ def run_threat_pressure():
             "alert_level":            alert_level,
             "version_confirmed":      m.get("version_confirmed", False),
             "detected_version":       m.get("detected_version"),
-            # WAF context — passed to prediction model
+            "confirmation_method":    m.get("confirmation_method", "none"),
             "is_behind_waf":          is_behind_waf,
             "waf_name":               waf_name,
+            "has_public_exploit":     m.get("has_public_exploit", False),
+            "exploit_count":          m.get("exploit_count", 0),
+            "exploit_ids":            m.get("exploit_ids", ""),
         }
 
         output.append(record)
 
-        # ── Alert logic ───────────────────────────────────────
         state_key  = f"{m['cve_id']}|{m['asset_id']}"
         is_new     = state_key not in previous_state
         tpf_raised = (not is_new) and tpf > previous_state[state_key]["tpf"]
@@ -186,7 +181,6 @@ def run_threat_pressure():
                 "description":            m["description"],
             })
 
-    # ── Save to DB + JSON ─────────────────────────────────────
     db_save_ti(output)
     db_save_alerts(alerts)
 
@@ -196,22 +190,33 @@ def run_threat_pressure():
     with open("alerts.json", "w") as f:
         json.dump(alerts, f, indent=2)
 
-    # ── Summary ───────────────────────────────────────────────
-    confirmed = sum(1 for r in output if r.get("version_confirmed"))
-    waf_count = sum(1 for r in output if r.get("is_behind_waf"))
+    confirmed     = sum(1 for r in output if r.get("version_confirmed"))
+    cpe_count     = sum(1 for r in output if r.get("confirmation_method") == "cpe_range")
+    txt_count     = sum(1 for r in output if r.get("confirmation_method") == "text_search")
+    waf_count     = sum(1 for r in output if r.get("is_behind_waf"))
+    exploit_count = sum(1 for r in output if r.get("has_public_exploit"))
+
     print(f"Total records:        {len(output)}")
     print(f"Version confirmed:    {confirmed}")
+    print(f"  ├─ cpe_range:       {cpe_count}  (high confidence)")
+    print(f"  └─ text_search:     {txt_count}  (medium confidence)")
     print(f"Behind WAF:           {waf_count}")
+    print(f"With public exploits: {exploit_count}")
     print(f"New/escalated alerts: {len(alerts)}")
 
     for a in alerts:
-        rec       = next((r for r in output if r["cve_id"] == a["cve_id"] and r["asset_id"] == a["asset_id"]), {})
-        vc_tag    = " [VERSION CONFIRMED]" if rec.get("version_confirmed") else ""
-        waf_tag   = f" [WAF: {rec['waf_name']}]" if rec.get("is_behind_waf") else ""
+        rec     = next((r for r in output
+                        if r["cve_id"] == a["cve_id"]
+                        and r["asset_id"] == a["asset_id"]), {})
+        cm      = rec.get("confirmation_method", "none")
+        vc_tag  = f" [VERSION {cm.upper()}]" if rec.get("version_confirmed") else ""
+        waf_tag = f" [WAF: {rec['waf_name']}]" if rec.get("is_behind_waf") else ""
+        exp_tag = f" [EXPLOIT x{rec.get('exploit_count',0)}]" \
+                  if rec.get("has_public_exploit") else ""
         print(
             f"  [{a['alert_level']}] {a['cve_id']} | {a['cve_product']}"
             f" -> {a['asset_name']} | {a['vuln_type']}"
-            f" | TPF: {a['threat_pressure_factor']}{vc_tag}{waf_tag}"
+            f" | TPF: {a['threat_pressure_factor']}{vc_tag}{waf_tag}{exp_tag}"
         )
 
 

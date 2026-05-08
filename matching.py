@@ -3,6 +3,7 @@ from database import (
     get_enriched_cves,
     get_assets,
     get_asset_services,
+    get_exploitdb_info,
     save_matched_cves as db_save_matched_cves
 )
 
@@ -20,6 +21,7 @@ WEB_VULN_KEYWORDS = {
     "xss":            ["cross-site scripting", "xss"],
 }
 
+
 def detect_vuln_type(description):
     if not description:
         return "unknown"
@@ -30,46 +32,115 @@ def detect_vuln_type(description):
                 return vuln_type
     return "other"
 
+
 def is_web_asset(asset):
     return asset["asset_type"].startswith("web")
 
+
 def compute_match_confidence(cve, asset):
-    cve_vendor  = cve["vendor"].lower()
-    cve_product = cve["product"].lower()
-    ast_vendor  = asset["vendor"].lower()
+    vendor_match  = cve["vendor"].lower() == asset["vendor"].lower()
+    product_match = any(kw.lower() in cve["product"].lower() for kw in asset["keywords"])
+    return "high" if (vendor_match and product_match) else "low"
 
-    vendor_match  = cve_vendor == ast_vendor
-    product_match = any(kw.lower() in cve_product for kw in asset["keywords"])
 
-    if vendor_match and product_match:
-        return "high"
-    return "low"
+# ── CPE Version Matching ──────────────────────────────────────
+
+def parse_version(version_str):
+    """Parse version string into comparable tuple. e.g. '1.20.1' → (1, 20, 1)"""
+    if not version_str:
+        return None
+    try:
+        parts = []
+        for x in version_str.split(".")[:4]:
+            digits = ""
+            for ch in x:
+                if ch.isdigit():
+                    digits += ch
+                else:
+                    break
+            if digits:
+                parts.append(int(digits))
+        return tuple(parts) if parts else None
+    except Exception:
+        return None
+
+
+def version_in_cpe_range(detected_version, cpe_range):
+    """Return True if detected_version falls within a single CPE range dict."""
+    detected = parse_version(detected_version)
+    if not detected:
+        return False
+
+    start_inc = parse_version(cpe_range.get("version_start_including"))
+    if start_inc and detected < start_inc:
+        return False
+
+    start_exc = parse_version(cpe_range.get("version_start_excluding"))
+    if start_exc and detected <= start_exc:
+        return False
+
+    end_inc = parse_version(cpe_range.get("version_end_including"))
+    if end_inc and detected > end_inc:
+        return False
+
+    end_exc = parse_version(cpe_range.get("version_end_excluding"))
+    if end_exc and detected >= end_exc:
+        return False
+
+    return True
+
 
 def check_version_confirmed(cve, asset_id):
+    """
+    Two-pass version confirmation:
+
+    Pass 1 — CPE ranges from NVD (structured, high confidence)
+              confirmation_method = "cpe_range"
+
+    Pass 2 — Text search in CVE description (fallback, medium confidence)
+              confirmation_method = "text_search"
+
+    No match → version_confirmed=False, confirmation_method="none"
+
+    Returns (version_confirmed, detected_version, confirmation_method)
+    """
     services = get_asset_services(asset_id)
     if not services:
-        return False, None
+        return False, None, "none"
 
-    desc_and_product = (
+    detected_version = None
+    for svc in services:
+        if svc.get("version"):
+            detected_version = svc["version"]
+            break
+
+    if not detected_version:
+        return False, None, "none"
+
+    # ── Pass 1: CPE ranges (high confidence) ─────────────────
+    cpe_ranges = cve.get("cpe_ranges", [])
+    if cpe_ranges:
+        for cpe_range in cpe_ranges:
+            if version_in_cpe_range(detected_version, cpe_range):
+                return True, detected_version, "cpe_range"
+        # CPE ranges exist but version NOT in range — definitive no
+        return False, detected_version, "none"
+
+    # ── Pass 2: Text search (medium confidence fallback) ──────
+    # Only used when NVD has no structured CPE ranges for this CVE
+    desc_text = (
         f"{cve.get('description', '')} {cve.get('product', '')}"
     ).lower()
 
-    for svc in services:
-        version = svc.get("version") or ""
-        if not version:
-            continue
-        if version.lower() in desc_and_product:
-            return True, version
-        major_minor = ".".join(version.split(".")[:2])
-        if major_minor and major_minor in desc_and_product:
-            return True, version
+    if detected_version.lower() in desc_text:
+        return True, detected_version, "text_search"
 
-    for svc in services:
-        version = svc.get("version") or ""
-        if version:
-            return False, version
+    major_minor = ".".join(detected_version.split(".")[:2])
+    if major_minor and major_minor in desc_text:
+        return True, detected_version, "text_search"
 
-    return False, None
+    return False, detected_version, "none"
+
 
 def run_matching():
     cves   = get_enriched_cves()
@@ -78,16 +149,14 @@ def run_matching():
     if not cves:
         print("[ERROR] enriched_cves table empty. Run Step 2 first.")
         return
-
     if not assets:
         print("[ERROR] assets table empty. Run Asset Monitor first.")
         return
 
     web_assets = [a for a in assets if is_web_asset(a)]
-
-    matched = []
-    review  = []
-    seen    = set()
+    matched    = []
+    review     = []
+    seen       = set()
 
     for cve in cves:
         for asset in web_assets:
@@ -104,9 +173,13 @@ def run_matching():
 
             seen.add(key)
 
-            version_confirmed, detected_version = check_version_confirmed(
-                cve, asset["asset_id"]
+            # ── Version confirmation (CPE-first) ──────────────
+            version_confirmed, detected_version, confirmation_method = (
+                check_version_confirmed(cve, asset["asset_id"])
             )
+
+            # ── Exploit-DB lookup ─────────────────────────────
+            exploit_info = get_exploitdb_info(cve["cve_id"])
 
             matched.append({
                 "cve_id":               cve["cve_id"],
@@ -129,17 +202,29 @@ def run_matching():
                 "match_confidence":     confidence,
                 "vuln_type":            detect_vuln_type(cve["description"]),
                 "scope":                "web",
-                "source":               "CISA_KEV + NVD + EPSS",
+                "source":               "CISA_KEV + NVD + EPSS + ExploitDB",
                 "version_confirmed":    version_confirmed,
                 "detected_version":     detected_version,
+                "confirmation_method":  confirmation_method,
+                "has_public_exploit":   exploit_info["has_public_exploit"],
+                "exploit_count":        exploit_info["exploit_count"],
+                "exploit_ids":          exploit_info["exploit_ids"],
             })
 
     db_save_matched_cves(matched)
 
-    confirmed_count = sum(1 for m in matched if m["version_confirmed"])
-    print(f"Total matched   (high confidence): {len(matched)}")
-    print(f"Version confirmed (Nmap verified): {confirmed_count}")
-    print(f"Total review    (low confidence):  {len(review)}")
+    confirmed     = sum(1 for m in matched if m["version_confirmed"])
+    cpe_confirmed = sum(1 for m in matched if m["confirmation_method"] == "cpe_range")
+    txt_confirmed = sum(1 for m in matched if m["confirmation_method"] == "text_search")
+    with_exploits = sum(1 for m in matched if m["has_public_exploit"])
+
+    print(f"Total matched   (high confidence):  {len(matched)}")
+    print(f"Version confirmed:                  {confirmed}")
+    print(f"  ├─ via CPE ranges (high):         {cpe_confirmed}")
+    print(f"  └─ via text search (medium):      {txt_confirmed}")
+    print(f"With public exploits (Exploit-DB):  {with_exploits}")
+    print(f"Total review    (low confidence):   {len(review)}")
+
 
 if __name__ == "__main__":
     run_matching()

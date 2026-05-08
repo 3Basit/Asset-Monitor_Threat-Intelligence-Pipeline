@@ -1,9 +1,1 @@
-[
-  {
-    "target_id": "TARGET-001",
-    "url": "http://testphp.vulnweb.com",
-    "error_type": "ConnectTimeout",
-    "error_message": "HTTPConnectionPool(host='testphp.vulnweb.com', port=80): Max retries exceeded with url: / (Caused by ConnectTimeoutError(<urllib3.connection.HTTPConnection object at 0x0000025A4EF95810>, 'Connection t",
-    "last_seen": "2026-05-07T19:16:52.337214+00:00"
-  }
-]
+[]

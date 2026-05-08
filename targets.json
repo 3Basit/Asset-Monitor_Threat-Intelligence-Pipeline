@@ -1,12 +1,4 @@
-[
-  {
-    "target_id": "TARGET-001",
-    "url": "http://testphp.vulnweb.com",
-    "business_criticality": "critical",
-    "internet_facing": true,
-    "authorized": true,
-    "scan_profile": "demo"
-  },
+[ 
   {
     "target_id": "TARGET-002",
     "url": "http://testasp.vulnweb.com",
@@ -14,5 +6,21 @@
     "internet_facing": true,
     "authorized": true,
     "scan_profile": "demo"
+  },
+  {
+    "target_id": "TARGET-003",
+    "url": "https://stdch.menofia.education",
+    "business_criticality": "critical",
+    "internet_facing": true,
+    "authorized": true,
+    "scan_profile": "university"
+  },
+  {
+    "target_id": "TARGET-004",
+    "url": "https://menofia.education",
+    "business_criticality": "critical",
+    "internet_facing": true,
+    "authorized": true,
+    "scan_profile": "university"
   }
 ]

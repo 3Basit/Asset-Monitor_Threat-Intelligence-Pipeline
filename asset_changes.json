@@ -1,11 +1,1 @@
-[
-  {
-    "change_type": "SCAN_FAILED",
-    "target_id": "TARGET-001",
-    "url": "http://testphp.vulnweb.com",
-    "old_value": null,
-    "new_value": "ConnectTimeout",
-    "severity": "medium",
-    "detected_at": "2026-05-07T19:17:25.193956+00:00"
-  }
-]
+[]

@@ -4,10 +4,12 @@ from datetime import datetime
 
 DB_FILE = "threat_intelligence.db"
 
+
 def get_connection():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def init_db():
     conn = get_connection()
@@ -49,7 +51,18 @@ def init_db():
             severity         TEXT,
             published        TEXT,
             epss_score       REAL,
-            epss_percentile  REAL
+            epss_percentile  REAL,
+            cpe_ranges       TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exploitdb_cves (
+            cve_id             TEXT PRIMARY KEY,
+            has_public_exploit INTEGER DEFAULT 0,
+            exploit_count      INTEGER DEFAULT 0,
+            exploit_ids        TEXT,
+            checked_at         TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -79,6 +92,10 @@ def init_db():
             source               TEXT,
             version_confirmed    INTEGER DEFAULT 0,
             detected_version     TEXT,
+            confirmation_method  TEXT DEFAULT 'none',
+            has_public_exploit   INTEGER DEFAULT 0,
+            exploit_count        INTEGER DEFAULT 0,
+            exploit_ids          TEXT,
             UNIQUE(cve_id, asset_id)
         )
     """)
@@ -114,8 +131,12 @@ def init_db():
             alert_level             TEXT,
             version_confirmed       INTEGER DEFAULT 0,
             detected_version        TEXT,
+            confirmation_method     TEXT DEFAULT 'none',
             is_behind_waf           INTEGER DEFAULT 0,
             waf_name                TEXT,
+            has_public_exploit      INTEGER DEFAULT 0,
+            exploit_count           INTEGER DEFAULT 0,
+            exploit_ids             TEXT,
             last_updated            TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(cve_id, asset_id)
         )
@@ -181,18 +202,27 @@ def init_db():
 
     # ── Schema migrations (safe on existing DB) ───────────────
     migrations = [
-        "ALTER TABLE matched_cves        ADD COLUMN version_confirmed INTEGER DEFAULT 0",
-        "ALTER TABLE matched_cves        ADD COLUMN detected_version  TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN version_confirmed INTEGER DEFAULT 0",
-        "ALTER TABLE threat_intelligence ADD COLUMN detected_version  TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN is_behind_waf     INTEGER DEFAULT 0",
-        "ALTER TABLE threat_intelligence ADD COLUMN waf_name          TEXT",
+        "ALTER TABLE matched_cves        ADD COLUMN version_confirmed   INTEGER DEFAULT 0",
+        "ALTER TABLE matched_cves        ADD COLUMN detected_version    TEXT",
+        "ALTER TABLE matched_cves        ADD COLUMN confirmation_method TEXT DEFAULT 'none'",
+        "ALTER TABLE matched_cves        ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
+        "ALTER TABLE matched_cves        ADD COLUMN exploit_count       INTEGER DEFAULT 0",
+        "ALTER TABLE matched_cves        ADD COLUMN exploit_ids         TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN version_confirmed   INTEGER DEFAULT 0",
+        "ALTER TABLE threat_intelligence ADD COLUMN detected_version    TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN confirmation_method TEXT DEFAULT 'none'",
+        "ALTER TABLE threat_intelligence ADD COLUMN is_behind_waf       INTEGER DEFAULT 0",
+        "ALTER TABLE threat_intelligence ADD COLUMN waf_name            TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
+        "ALTER TABLE threat_intelligence ADD COLUMN exploit_count       INTEGER DEFAULT 0",
+        "ALTER TABLE threat_intelligence ADD COLUMN exploit_ids         TEXT",
+        "ALTER TABLE enriched_cves       ADD COLUMN cpe_ranges          TEXT",
     ]
     for sql in migrations:
         try:
             cursor.execute(sql)
         except sqlite3.OperationalError:
-            pass  # column already exists
+            pass
 
     conn.commit()
     conn.close()
@@ -218,6 +248,7 @@ def save_assets(assets):
     conn.commit()
     conn.close()
 
+
 def save_cisa_kev(vulns):
     conn = get_connection()
     cursor = conn.cursor()
@@ -233,6 +264,7 @@ def save_cisa_kev(vulns):
     conn.commit()
     conn.close()
 
+
 def save_enriched_cves(cves):
     conn = get_connection()
     cursor = conn.cursor()
@@ -240,16 +272,34 @@ def save_enriched_cves(cves):
         cursor.execute("""
             INSERT OR REPLACE INTO enriched_cves
             (cve_id, vendor, product, date_added, known_ransomware, description,
-             cvss_score, severity, published, epss_score, epss_percentile)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             cvss_score, severity, published, epss_score, epss_percentile, cpe_ranges)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             c["cve_id"], c["vendor"], c["product"], c["date_added"],
             int(c["known_ransomware"]), c["description"],
             c.get("cvss_score"), c.get("severity"), c.get("published"),
-            c.get("epss_score"), c.get("epss_percentile")
+            c.get("epss_score"), c.get("epss_percentile"),
+            json.dumps(c.get("cpe_ranges", []))
         ))
     conn.commit()
     conn.close()
+
+
+def save_exploitdb_cves(records):
+    conn = get_connection()
+    cursor = conn.cursor()
+    for r in records:
+        cursor.execute("""
+            INSERT OR REPLACE INTO exploitdb_cves
+            (cve_id, has_public_exploit, exploit_count, exploit_ids)
+            VALUES (?, ?, ?, ?)
+        """, (
+            r["cve_id"], int(r["has_public_exploit"]),
+            r["exploit_count"], r["exploit_ids"]
+        ))
+    conn.commit()
+    conn.close()
+
 
 def save_matched_cves(matches):
     conn = get_connection()
@@ -262,8 +312,10 @@ def save_matched_cves(matches):
              asset_vendor, asset_product, business_criticality, cvss_score, severity,
              epss_score, epss_percentile, published, date_added, known_ransomware,
              vuln_type, description, match_confidence, scope, source,
-             version_confirmed, detected_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             version_confirmed, detected_version, confirmation_method,
+             has_public_exploit, exploit_count, exploit_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?)
         """, (
             m["cve_id"], m["cve_vendor"], m["cve_product"],
             m["asset_id"], m["asset_name"], m["asset_type"],
@@ -275,10 +327,15 @@ def save_matched_cves(matches):
             m.get("vuln_type"), m.get("description"),
             m.get("match_confidence"), m.get("scope"), m.get("source"),
             int(m.get("version_confirmed", False)),
-            m.get("detected_version")
+            m.get("detected_version"),
+            m.get("confirmation_method", "none"),
+            int(m.get("has_public_exploit", False)),
+            m.get("exploit_count", 0),
+            m.get("exploit_ids", "")
         ))
     conn.commit()
     conn.close()
+
 
 def save_threat_intelligence(records):
     conn = get_connection()
@@ -292,8 +349,10 @@ def save_threat_intelligence(records):
              epss_score, epss_percentile, published, date_added, days_since_published,
              days_since_kev_added, known_ransomware, vuln_type, description,
              match_confidence, scope, source, threat_score, threat_pressure_factor,
-             alert_level, version_confirmed, detected_version, is_behind_waf, waf_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             alert_level, version_confirmed, detected_version, confirmation_method,
+             is_behind_waf, waf_name, has_public_exploit, exploit_count, exploit_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             r["cve_id"], r["cve_vendor"], r["cve_product"],
             r["asset_id"], r["asset_name"], r["asset_type"],
@@ -308,11 +367,16 @@ def save_threat_intelligence(records):
             r.get("threat_score"), r.get("threat_pressure_factor"), r.get("alert_level"),
             int(r.get("version_confirmed", False)),
             r.get("detected_version"),
+            r.get("confirmation_method", "none"),
             int(r.get("is_behind_waf", False)),
-            r.get("waf_name")
+            r.get("waf_name"),
+            int(r.get("has_public_exploit", False)),
+            r.get("exploit_count", 0),
+            r.get("exploit_ids", "")
         ))
     conn.commit()
     conn.close()
+
 
 def save_alerts(alerts_list):
     conn = get_connection()
@@ -335,6 +399,7 @@ def save_alerts(alerts_list):
     conn.commit()
     conn.close()
 
+
 def save_asset_services(asset_id, services):
     conn = get_connection()
     cursor = conn.cursor()
@@ -354,6 +419,7 @@ def save_asset_services(asset_id, services):
     conn.commit()
     conn.close()
 
+
 def save_asset_technologies(asset_id, technologies):
     conn = get_connection()
     cursor = conn.cursor()
@@ -364,15 +430,13 @@ def save_asset_technologies(asset_id, technologies):
             (asset_id, technology_name, category, version, source, confidence)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            asset_id,
-            t.get("name"),
-            t.get("category"),
-            t.get("version"),
-            t.get("source", "signature"),
+            asset_id, t.get("name"), t.get("category"),
+            t.get("version"), t.get("source", "signature"),
             t.get("confidence", "medium")
         ))
     conn.commit()
     conn.close()
+
 
 def save_asset_waf_info(asset_id, is_behind_waf, waf_name, detected_by):
     conn = get_connection()
@@ -401,6 +465,7 @@ def get_assets():
         assets.append(a)
     return assets
 
+
 def get_cisa_kev():
     conn = get_connection()
     cursor = conn.cursor()
@@ -414,6 +479,7 @@ def get_cisa_kev():
         result.append(d)
     return result
 
+
 def get_enriched_cves():
     conn = get_connection()
     cursor = conn.cursor()
@@ -424,11 +490,34 @@ def get_enriched_cves():
     for r in rows:
         d = dict(r)
         d["known_ransomware"] = bool(d["known_ransomware"])
+        try:
+            d["cpe_ranges"] = json.loads(d.get("cpe_ranges") or "[]")
+        except Exception:
+            d["cpe_ranges"] = []
         result.append(d)
     return result
 
+
+def get_exploitdb_info(cve_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT has_public_exploit, exploit_count, exploit_ids "
+        "FROM exploitdb_cves WHERE cve_id = ?",
+        (cve_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {
+            "has_public_exploit": bool(row["has_public_exploit"]),
+            "exploit_count":      row["exploit_count"],
+            "exploit_ids":        row["exploit_ids"] or "",
+        }
+    return {"has_public_exploit": False, "exploit_count": 0, "exploit_ids": ""}
+
+
 def get_matched_cves():
-    """Returns only high-confidence matches that enter the pipeline."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM matched_cves WHERE match_confidence = 'high'")
@@ -437,10 +526,12 @@ def get_matched_cves():
     result = []
     for r in rows:
         d = dict(r)
-        d["known_ransomware"]  = bool(d["known_ransomware"])
-        d["version_confirmed"] = bool(d.get("version_confirmed", 0))
+        d["known_ransomware"]   = bool(d["known_ransomware"])
+        d["version_confirmed"]  = bool(d.get("version_confirmed", 0))
+        d["has_public_exploit"] = bool(d.get("has_public_exploit", 0))
         result.append(d)
     return result
+
 
 def get_asset_services(asset_id):
     conn = get_connection()
@@ -461,8 +552,8 @@ def get_asset_services(asset_id):
         result.append(d)
     return result
 
+
 def get_asset_waf_info(asset_id):
-    """Returns WAF status for an asset."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -475,15 +566,13 @@ def get_asset_waf_info(asset_id):
         return {"is_behind_waf": bool(row["is_behind_waf"]), "waf_name": row["waf_name"]}
     return {"is_behind_waf": False, "waf_name": None}
 
+
 def get_previous_ti_state():
-    """
-    Returns last saved TI snapshot keyed by 'cve_id|asset_id'.
-    Call BEFORE save_threat_intelligence() clears the table.
-    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT cve_id, asset_id, threat_pressure_factor, alert_level FROM threat_intelligence"
+        "SELECT cve_id, asset_id, threat_pressure_factor, alert_level "
+        "FROM threat_intelligence"
     )
     rows = cursor.fetchall()
     conn.close()
@@ -494,6 +583,7 @@ def get_previous_ti_state():
         }
         for r in rows
     }
+
 
 if __name__ == "__main__":
     init_db()

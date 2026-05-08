@@ -2,12 +2,13 @@
 
 Part of the **Cyber Risk Dollarizer** graduation project. This module is responsible for:
 
-1. Discovering and monitoring web assets (HTTP fingerprinting + Nmap)
+1. Discovering and monitoring web assets (HTTP fingerprinting + Nmap + Tech + WAF detection)
 2. Fetching confirmed-exploited vulnerabilities from CISA KEV
-3. Enriching CVEs with CVSS scores (NVD) and exploitation probability (EPSS)
-4. Matching CVEs to live assets using vendor, product, and version detection
-5. Computing a Threat Pressure Factor (TPF) per CVE-Asset pair
-6. Sending `threat_intelligence_output.json` to the Prediction Model
+3. Enriching CVEs with CVSS scores + CPE version ranges (NVD) and exploitation probability (EPSS)
+4. Checking public exploit availability (Exploit-DB)
+5. Matching CVEs to live assets using vendor, product, and CPE version ranges
+6. Computing a Threat Pressure Factor (TPF) per CVE-Asset pair
+7. Sending `threat_intelligence_output.json` to the Prediction Model
 
 ---
 
@@ -19,8 +20,9 @@ grad.project.C/
 ├── main.py                          # Full pipeline runner
 ├── asset_monitor.py                 # Phase 1+2+3: HTTP + Nmap + Tech/WAF detection
 ├── cisa_kev.py                      # Fetches CISA KEV catalog
-├── nvd_fetch.py                     # Enriches CVEs with NVD + EPSS
-├── matching.py                      # Matches CVEs to assets
+├── nvd_fetch.py                     # Enriches CVEs with NVD + EPSS + CPE ranges
+├── exploit_db.py                    # Checks public exploit availability
+├── matching.py                      # Matches CVEs to assets (CPE version-aware)
 ├── threat_pressure.py               # Computes TPF + generates alerts
 ├── database.py                      # SQLite schema + all DB functions
 ├── check_db.py                      # DB inspection utility
@@ -31,14 +33,14 @@ grad.project.C/
 ├── alerts.json                      # New/escalated alerts (auto-generated)
 ├── asset_changes.json               # Detected infrastructure changes
 │
-├── threat_intelligence.db           # SQLite database
+├── threat_intelligence.db           # SQLite database (11 tables)
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## Database Schema (10 Tables)
+## Database Schema (11 Tables)
 
 | Table | Contents |
 |---|---|
@@ -47,7 +49,8 @@ grad.project.C/
 | `asset_technologies` | Detected technologies (CMS, frameworks, JS libs) |
 | `asset_waf_info` | WAF detection results |
 | `cisa_kev` | Raw CISA KEV catalog |
-| `enriched_cves` | CVEs enriched with CVSS + EPSS |
+| `enriched_cves` | CVEs enriched with CVSS + EPSS + CPE ranges |
+| `exploitdb_cves` | Public exploit availability per CVE |
 | `matched_cves` | CVE-Asset matches (high confidence only) |
 | `threat_intelligence` | Final TPF output |
 | `alerts` | Alert history |
@@ -70,7 +73,7 @@ pip install -r requirements.txt
 
 ### Configure targets
 
-Edit `targets.json` to add your scan targets:
+Edit `targets.json`:
 
 ```json
 [
@@ -85,31 +88,27 @@ Edit `targets.json` to add your scan targets:
 ]
 ```
 
-> **Important:** Only scan targets where `"authorized": true`. Never scan systems you do not have explicit permission to test.
+> **Important:** Only scan targets where `"authorized": true`.
 
 ---
 
 ## Running the Pipeline
 
 ```powershell
-# Step 1: Set NVD API key
 $env:NVD_API_KEY="your-key-here"
-
-# Step 2: Run full pipeline
 python main.py
-
-# Step 3: Inspect database
 python check_db.py
 ```
 
-The pipeline runs these steps automatically:
+**Pipeline steps:**
 
 ```
-init_db()           → creates/migrates SQLite schema
-asset_monitor.py    → scans targets, discovers assets
+init_db()           → creates/migrates SQLite schema (11 tables)
+asset_monitor.py    → scans targets, discovers assets + technologies + WAF
 cisa_kev.py         → fetches ~1500+ confirmed-exploited CVEs
-nvd_fetch.py        → enriches relevant CVEs with CVSS + EPSS
-matching.py         → matches CVEs to assets (version-aware)
+nvd_fetch.py        → enriches CVEs with CVSS + EPSS + CPE version ranges
+exploit_db.py       → checks Exploit-DB for public exploits per CVE
+matching.py         → matches CVEs to assets (CPE version-aware)
 threat_pressure.py  → computes TPF, generates alerts, writes output
 ```
 
@@ -121,21 +120,17 @@ threat_pressure.py  → computes TPF, generates alerts, writes output
 targets.json
     │
     ▼
-Asset Monitor ──────────────────────────────────────────────┐
-  Phase 1: HTTP fingerprinting (vendor, product, server)    │
-  Phase 2: Nmap service + version detection                 │
-  Phase 3A: Technology detection (HTML, cookies, headers)   │
-  Phase 3B: WAF detection (Cloudflare, Akamai, AWS, etc.)  │
-    │                                                        │
-    ▼                                                        │
-assets.json + DB (assets, asset_services,                   │
-                  asset_technologies, asset_waf_info)        │
-    │                                                        │
-    ▼                                                        │
-CISA KEV → NVD + EPSS → Matching → TPF Engine              │
-    │                                                        │
-    ▼                                                        │
-threat_intelligence_output.json  ←─── sent to Prediction ──┘
+Asset Monitor
+  Phase 1: HTTP fingerprinting (vendor, product, server header)
+  Phase 2: Nmap service + version detection
+  Phase 3A: Technology detection (HTML, cookies, JS libs, headers)
+  Phase 3B: WAF detection (Cloudflare, Akamai, AWS, F5, etc.)
+    │
+    ▼
+CISA KEV → NVD (CVSS + CPE ranges) + EPSS → Exploit-DB → Matching → TPF
+    │
+    ▼
+threat_intelligence_output.json  ← sent to Prediction Model
 alerts.json
 ```
 
@@ -143,7 +138,7 @@ alerts.json
 
 ## Threat Pressure Factor (TPF)
 
-TPF is a multiplier (1.0–2.0) representing how much a vulnerability increases the base risk:
+TPF is a multiplier (1.0–2.0):
 
 ```
 Final Risk = base_probability × threat_pressure_factor
@@ -151,16 +146,28 @@ Final Risk = base_probability × threat_pressure_factor
 
 **Components:**
 
-| Component | Max Weight |
-|---|---|
-| CVSS Score | +0.20 |
-| EPSS Score | +0.20 |
-| KEV Presence | +0.13 (always — all CVEs are KEV) |
-| Vulnerability Type (RCE, SQLi, etc.) | +0.20 |
-| Business Criticality | +0.20 |
-| Recency of exploitation | +0.10 |
-| Known Ransomware | +0.07 |
-| Version Confirmed (Nmap match) | +0.05 |
+| Component | Condition | Weight |
+|---|---|---|
+| CVSS Score | ≥9.0 Critical | +0.20 |
+| CVSS Score | ≥7.0 High | +0.13 |
+| CVSS Score | ≥4.0 Medium | +0.07 |
+| EPSS Score | ≥0.7 | +0.20 |
+| EPSS Score | ≥0.4 | +0.13 |
+| EPSS Score | ≥0.1 | +0.07 |
+| KEV Presence | Always (all records) | +0.13 |
+| Vulnerability Type | RCE | +0.20 |
+| Vulnerability Type | SQLi / Auth Bypass | +0.15 |
+| Vulnerability Type | Path Traversal / SSRF | +0.12 |
+| Vulnerability Type | XSS | +0.08 |
+| Business Criticality | Critical | +0.20 |
+| Business Criticality | High | +0.13 |
+| Business Criticality | Medium | +0.07 |
+| Recency | KEV added ≤30 days | +0.10 |
+| Recency | KEV added ≤90 days | +0.06 |
+| Recency | KEV added ≤365 days | +0.03 |
+| Known Ransomware | If true | +0.07 |
+| Version Confirmed | CPE range only | +0.05 |
+| Public Exploit | Exploit-DB confirmed | +0.10 |
 
 **Alert levels:**
 
@@ -173,9 +180,18 @@ Final Risk = base_probability × threat_pressure_factor
 
 ---
 
-## Output Format
+## Version Confirmation
 
-See `THREAT_INTELLIGENCE_OUTPUT_GUIDE.md` for complete field-by-field documentation of `threat_intelligence_output.json`.
+The system uses a two-pass approach to confirm if a detected version is vulnerable:
+
+**Pass 1 — CPE Ranges (High Confidence)**
+Uses structured NVD CPE data to check if the Nmap-detected version falls within the vulnerable range. Adds +0.05 to TPF. Reported as `confirmation_method: "cpe_range"`.
+
+**Pass 2 — Text Search (Medium Confidence, fallback)**
+When NVD has no structured CPE data, searches the CVE description text for the version string. Does NOT add TPF bonus. Reported as `confirmation_method: "text_search"`.
+
+**No Match**
+`version_confirmed: false`, `confirmation_method: "none"`.
 
 ---
 
@@ -184,15 +200,14 @@ See `THREAT_INTELLIGENCE_OUTPUT_GUIDE.md` for complete field-by-field documentat
 | Source | URL | What it provides |
 |---|---|---|
 | CISA KEV | cisa.gov | Confirmed exploited vulnerabilities |
-| NVD | nvd.nist.gov | CVSS scores + severity + published date |
+| NVD | nvd.nist.gov | CVSS + CPE version ranges + published date |
 | EPSS | first.org | 30-day exploitation probability |
+| Exploit-DB | exploit-db.com | Public exploit availability |
 | Nmap | nmap.org | Live service version detection |
 
 ---
 
 ## Team Integration
-
-This module is part of a 4-component system:
 
 ```
 Pentest Model  →  Threat Intelligence Module (this)
@@ -202,10 +217,10 @@ Pentest Model  →  Threat Intelligence Module (this)
                Prediction Model  →  LLM Recommendations
 ```
 
-The Prediction Model multiplies its base probability by `threat_pressure_factor` from our output to produce the final risk probability used for cyber risk dollarization.
+See `THREAT_INTELLIGENCE_OUTPUT_GUIDE.md` for complete field documentation.
 
 ---
 
 ## Legal Notice
 
-This tool is for authorized security testing only. The demo targets (`testphp.vulnweb.com`, `testasp.vulnweb.com`) are Acunetix-provided legal test environments. Replace with your authorized targets before deployment.
+Only scan systems you are authorized to test. Demo targets (`testphp.vulnweb.com`, `testasp.vulnweb.com`) are Acunetix-provided legal test environments.

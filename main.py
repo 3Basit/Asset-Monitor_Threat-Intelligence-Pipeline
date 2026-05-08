@@ -1,8 +1,9 @@
 import sys
 import subprocess
-from database import init_db
+from database        import init_db, get_enriched_cves
 from cisa_kev        import fetch_cisa_kev, save_cisa_kev
 from nvd_fetch       import enrich_cves
+from exploit_db      import run_exploitdb
 from matching        import run_matching
 from threat_pressure import run_threat_pressure
 
@@ -23,14 +24,21 @@ print("=" * 50)
 print("Step 1: Fetching CISA KEV...")
 save_cisa_kev(fetch_cisa_kev())
 
-# ── Step 2: NVD + EPSS ───────────────────────────────────────
+# ── Step 2: NVD + EPSS + CPE ranges ──────────────────────────
 print("=" * 50)
-print("Step 2: Enriching from NVD + EPSS...")
+print("Step 2: Enriching from NVD + EPSS (with CPE version ranges)...")
 enrich_cves()
 
-# ── Step 3: Matching ──────────────────────────────────────────
+# ── Step 2b: Exploit-DB ───────────────────────────────────────
 print("=" * 50)
-print("Step 3: Matching CVEs to web assets (with version check)...")
+print("Step 2b: Checking Exploit-DB for public exploits...")
+enriched_cves = get_enriched_cves()
+cve_ids       = [c["cve_id"] for c in enriched_cves]
+run_exploitdb(cve_ids)
+
+# ── Step 3: Matching (CPE-aware) ──────────────────────────────
+print("=" * 50)
+print("Step 3: Matching CVEs to web assets (CPE version check + Exploit-DB)...")
 run_matching()
 
 # ── Step 4: TPF + Alerts ──────────────────────────────────────
