@@ -28,3 +28,9 @@ __pycache__/
 # Windows
 Thumbs.db
 desktop.ini
+
+assets.json
+alerts.json
+asset_changes.json
+failed_targets.json
+threat_intelligence_output.json
