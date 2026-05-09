@@ -1,36 +1,36 @@
-# Database (contains live scan data — do not commit)
+# ── Database ──────────────────────────────────────────────────
+# Contains live scan data — never commit
 threat_intelligence.db
 
-# Auto-generated JSON files (recreated on every run)
+# ── Auto-generated JSON files (recreated on every run) ────────
 CISA_KEV.json
 enriched_cves.json
 matched_cves.json
 review_matches.json
 previous_state.json
-
-# Snapshot files (machine-specific)
-current_assets_snapshot.json
-previous_assets_snapshot.json
-
-# Environment / API keys
-.env
-*.env
-
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# VS Code
-.vscode/
-
-# Windows
-Thumbs.db
-desktop.ini
-
 assets.json
 alerts.json
 asset_changes.json
 failed_targets.json
 threat_intelligence_output.json
+
+# ── Snapshot files (machine-specific) ────────────────────────
+current_assets_snapshot.json
+previous_assets_snapshot.json
+
+# ── Environment / API keys ────────────────────────────────────
+.env
+*.env
+
+# ── Python cache ──────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── VS Code ───────────────────────────────────────────────────
+.vscode/
+
+# ── Windows ───────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
