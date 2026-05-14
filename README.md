@@ -44,9 +44,9 @@ grad.project.C/
 | `assets` | Discovered web assets |
 | `asset_services` | Open ports and services from Nmap |
 | `asset_technologies` | Detected technologies (CMS, frameworks, JS libs) |
-| `asset_waf_info` | WAF detection results |
+| `asset_waf_info` | WAF detection results per asset |
 | `cisa_kev` | Raw CISA KEV catalog |
-| `enriched_cves` | CVEs enriched with CVSS + EPSS + CPE ranges |
+| `enriched_cves` | CVEs enriched with CVSS + EPSS + CPE ranges + CWE |
 | `exploitdb_cves` | Public exploit availability per CVE |
 | `matched_cves` | CVE-Asset matches (high confidence only) |
 | `threat_intelligence` | Final TPF output |
@@ -103,7 +103,7 @@ python check_db.py
 init_db()           → creates/migrates SQLite schema (10 tables)
 asset_monitor.py    → scans targets, discovers assets + technologies + WAF
 cisa_kev.py         → fetches ~1500+ confirmed-exploited CVEs
-nvd_fetch.py        → enriches CVEs with CVSS + EPSS + CPE version ranges
+nvd_fetch.py        → enriches CVEs with CVSS + EPSS + CPE ranges + CWE
 exploit_db.py       → checks Exploit-DB for public exploits per CVE
 matching.py         → matches CVEs to assets (CPE version-aware)
 threat_pressure.py  → computes TPF, generates alerts, writes output

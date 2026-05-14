@@ -86,9 +86,8 @@ def run_threat_pressure():
     matches = get_matched_cves()
 
     if not matches:
-        print("[WARN] matched_cves table empty — falling back to matched_cves.json")
-        with open("matched_cves.json") as f:
-            matches = json.load(f)
+        print("[WARN] matched_cves table is empty — run Step 3 (matching) first.")
+        return
 
     previous_state = get_previous_ti_state()
     output = []
@@ -151,6 +150,8 @@ def run_threat_pressure():
             "has_public_exploit":     m.get("has_public_exploit", False),
             "exploit_count":          m.get("exploit_count", 0),
             "exploit_ids":            m.get("exploit_ids", ""),
+            "cwe_id":                 m.get("cwe_id"),
+            "cwe_name":               m.get("cwe_name"),
         }
 
         output.append(record)

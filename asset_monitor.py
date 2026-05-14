@@ -17,7 +17,9 @@ from database import (
     save_asset_waf_info
 )
 
-NMAP_WEB_PORTS = "80,443,8080,8443,8000,8888"
+NMAP_WEB_PORTS    = "80,443,8080,8443,8000,8888"
+SCAN_DELAY_SECONDS = 2  # Polite delay between target scans to avoid crawler detection
+USER_AGENT         = "GradProject-AssetMonitor/1.0 (authorized-security-research; contact: security@example.com)"
 
 # ── Phase 3: Technology Signatures ────────────────────────
 
@@ -156,7 +158,7 @@ def fingerprint_target(target, session):
         print(f"  [SKIP] Skipping {url} - not authorized")
         return result
 
-    headers = {"User-Agent": "GradProject-AssetMonitor/1.0"}
+    headers = {"User-Agent": USER_AGENT}
 
     try:
         start    = time.time()
@@ -188,8 +190,8 @@ def fingerprint_target(target, session):
         try:
             hostname     = urlparse(url).hostname
             result["ip"] = socket.gethostbyname(hostname)
-        except:
-            pass
+        except (socket.gaierror, OSError):
+            pass  # DNS resolution failed — IP stays None
 
         server   = result["server"] or ""
         powered  = result["x_powered_by"] or ""
@@ -404,8 +406,8 @@ def detect_technologies(result):
         try:
             if match.lastindex and match.group(1):
                 version = match.group(1)
-        except:
-            pass
+        except (IndexError, AttributeError):
+            pass  # Regex group not captured — version stays None
 
         add_tech(name, sig["category"], version, sig["source"], sig["confidence"])
 
@@ -627,7 +629,11 @@ def run_monitor():
     current_assets = []
     session        = get_session()
 
-    for target in targets:
+    for i, target in enumerate(targets):
+        if i > 0:
+            delay = target.get("scan_delay_seconds", SCAN_DELAY_SECONDS)
+            print(f"  [Rate-limit] Waiting {delay}s before next target...")
+            time.sleep(delay)
         print(f"\nScanning {target['url']}...")
 
         # Phase 1 — HTTP Fingerprinting

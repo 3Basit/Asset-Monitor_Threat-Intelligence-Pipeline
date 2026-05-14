@@ -209,6 +209,8 @@ def run_matching():
                 "has_public_exploit":   exploit_info["has_public_exploit"],
                 "exploit_count":        exploit_info["exploit_count"],
                 "exploit_ids":          exploit_info["exploit_ids"],
+                "cwe_id":               cve.get("cwe_id"),
+                "cwe_name":             cve.get("cwe_name"),
             })
 
     db_save_matched_cves(matched)

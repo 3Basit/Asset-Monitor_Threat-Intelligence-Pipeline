@@ -1,11 +1,28 @@
 import sqlite3
 import json
+from contextlib import contextmanager
 from datetime import datetime
 
 DB_FILE = "threat_intelligence.db"
 
 
+@contextmanager
+def get_db():
+    """Context manager: auto-commit on success, rollback on error, always closes."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_connection():
+    """Legacy helper kept for read-only callers that fetch and close manually."""
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
@@ -208,6 +225,8 @@ def init_db():
         "ALTER TABLE matched_cves        ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
         "ALTER TABLE matched_cves        ADD COLUMN exploit_count       INTEGER DEFAULT 0",
         "ALTER TABLE matched_cves        ADD COLUMN exploit_ids         TEXT",
+        "ALTER TABLE matched_cves        ADD COLUMN cwe_id              TEXT",
+        "ALTER TABLE matched_cves        ADD COLUMN cwe_name            TEXT",
         "ALTER TABLE threat_intelligence ADD COLUMN version_confirmed   INTEGER DEFAULT 0",
         "ALTER TABLE threat_intelligence ADD COLUMN detected_version    TEXT",
         "ALTER TABLE threat_intelligence ADD COLUMN confirmation_method TEXT DEFAULT 'none'",
@@ -216,7 +235,11 @@ def init_db():
         "ALTER TABLE threat_intelligence ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
         "ALTER TABLE threat_intelligence ADD COLUMN exploit_count       INTEGER DEFAULT 0",
         "ALTER TABLE threat_intelligence ADD COLUMN exploit_ids         TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN cwe_id              TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN cwe_name            TEXT",
         "ALTER TABLE enriched_cves       ADD COLUMN cpe_ranges          TEXT",
+        "ALTER TABLE enriched_cves       ADD COLUMN cwe_id              TEXT",
+        "ALTER TABLE enriched_cves       ADD COLUMN cwe_name            TEXT",
     ]
     for sql in migrations:
         try:
@@ -232,222 +255,207 @@ def init_db():
 # ── Writes ────────────────────────────────────────────────────
 
 def save_assets(assets):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM assets")
-    for a in assets:
-        cursor.execute("""
-            INSERT OR REPLACE INTO assets
-            (asset_id, asset_name, asset_type, business_criticality, vendor, product, keywords)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            a["asset_id"], a["asset_name"], a["asset_type"],
-            a["business_criticality"], a["vendor"], a["product"],
-            json.dumps(a["keywords"])
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM assets")
+        for a in assets:
+            cursor.execute("""
+                INSERT OR REPLACE INTO assets
+                (asset_id, asset_name, asset_type, business_criticality, vendor, product, keywords)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                a["asset_id"], a["asset_name"], a["asset_type"],
+                a["business_criticality"], a["vendor"], a["product"],
+                json.dumps(a["keywords"])
+            ))
 
 
 def save_cisa_kev(vulns):
-    conn = get_connection()
-    cursor = conn.cursor()
-    for v in vulns:
-        cursor.execute("""
-            INSERT OR REPLACE INTO cisa_kev
-            (cve_id, vendor, product, date_added, known_ransomware, description)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            v["cve_id"], v["vendor"], v["product"],
-            v["date_added"], int(v["known_ransomware"]), v["description"]
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for v in vulns:
+            cursor.execute("""
+                INSERT OR REPLACE INTO cisa_kev
+                (cve_id, vendor, product, date_added, known_ransomware, description)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                v["cve_id"], v["vendor"], v["product"],
+                v["date_added"], int(v["known_ransomware"]), v["description"]
+            ))
 
 
 def save_enriched_cves(cves):
-    conn = get_connection()
-    cursor = conn.cursor()
-    for c in cves:
-        cursor.execute("""
-            INSERT OR REPLACE INTO enriched_cves
-            (cve_id, vendor, product, date_added, known_ransomware, description,
-             cvss_score, severity, published, epss_score, epss_percentile, cpe_ranges)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            c["cve_id"], c["vendor"], c["product"], c["date_added"],
-            int(c["known_ransomware"]), c["description"],
-            c.get("cvss_score"), c.get("severity"), c.get("published"),
-            c.get("epss_score"), c.get("epss_percentile"),
-            json.dumps(c.get("cpe_ranges", []))
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for c in cves:
+            cursor.execute("""
+                INSERT OR REPLACE INTO enriched_cves
+                (cve_id, vendor, product, date_added, known_ransomware, description,
+                 cvss_score, severity, published, epss_score, epss_percentile,
+                 cpe_ranges, cwe_id, cwe_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                c["cve_id"], c["vendor"], c["product"], c["date_added"],
+                int(c["known_ransomware"]), c["description"],
+                c.get("cvss_score"), c.get("severity"), c.get("published"),
+                c.get("epss_score"), c.get("epss_percentile"),
+                json.dumps(c.get("cpe_ranges", [])),
+                c.get("cwe_id"), c.get("cwe_name")
+            ))
 
 
 def save_exploitdb_cves(records):
-    conn = get_connection()
-    cursor = conn.cursor()
-    for r in records:
-        cursor.execute("""
-            INSERT OR REPLACE INTO exploitdb_cves
-            (cve_id, has_public_exploit, exploit_count, exploit_ids)
-            VALUES (?, ?, ?, ?)
-        """, (
-            r["cve_id"], int(r["has_public_exploit"]),
-            r["exploit_count"], r["exploit_ids"]
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for r in records:
+            cursor.execute("""
+                INSERT OR REPLACE INTO exploitdb_cves
+                (cve_id, has_public_exploit, exploit_count, exploit_ids)
+                VALUES (?, ?, ?, ?)
+            """, (
+                r["cve_id"], int(r["has_public_exploit"]),
+                r["exploit_count"], r["exploit_ids"]
+            ))
 
 
 def save_matched_cves(matches):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM matched_cves")
-    for m in matches:
-        cursor.execute("""
-            INSERT OR IGNORE INTO matched_cves
-            (cve_id, cve_vendor, cve_product, asset_id, asset_name, asset_type,
-             asset_vendor, asset_product, business_criticality, cvss_score, severity,
-             epss_score, epss_percentile, published, date_added, known_ransomware,
-             vuln_type, description, match_confidence, scope, source,
-             version_confirmed, detected_version, confirmation_method,
-             has_public_exploit, exploit_count, exploit_ids)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?)
-        """, (
-            m["cve_id"], m["cve_vendor"], m["cve_product"],
-            m["asset_id"], m["asset_name"], m["asset_type"],
-            m["asset_vendor"], m["asset_product"], m["business_criticality"],
-            m.get("cvss_score"), m.get("severity"),
-            m.get("epss_score"), m.get("epss_percentile"),
-            m.get("published"), m.get("date_added"),
-            int(m.get("known_ransomware", False)),
-            m.get("vuln_type"), m.get("description"),
-            m.get("match_confidence"), m.get("scope"), m.get("source"),
-            int(m.get("version_confirmed", False)),
-            m.get("detected_version"),
-            m.get("confirmation_method", "none"),
-            int(m.get("has_public_exploit", False)),
-            m.get("exploit_count", 0),
-            m.get("exploit_ids", "")
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM matched_cves")
+        for m in matches:
+            cursor.execute("""
+                INSERT OR IGNORE INTO matched_cves
+                (cve_id, cve_vendor, cve_product, asset_id, asset_name, asset_type,
+                 asset_vendor, asset_product, business_criticality, cvss_score, severity,
+                 epss_score, epss_percentile, published, date_added, known_ransomware,
+                 vuln_type, description, match_confidence, scope, source,
+                 version_confirmed, detected_version, confirmation_method,
+                 has_public_exploit, exploit_count, exploit_ids, cwe_id, cwe_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                m["cve_id"], m["cve_vendor"], m["cve_product"],
+                m["asset_id"], m["asset_name"], m["asset_type"],
+                m["asset_vendor"], m["asset_product"], m["business_criticality"],
+                m.get("cvss_score"), m.get("severity"),
+                m.get("epss_score"), m.get("epss_percentile"),
+                m.get("published"), m.get("date_added"),
+                int(m.get("known_ransomware", False)),
+                m.get("vuln_type"), m.get("description"),
+                m.get("match_confidence"), m.get("scope"), m.get("source"),
+                int(m.get("version_confirmed", False)),
+                m.get("detected_version"),
+                m.get("confirmation_method", "none"),
+                int(m.get("has_public_exploit", False)),
+                m.get("exploit_count", 0),
+                m.get("exploit_ids", ""),
+                m.get("cwe_id"), m.get("cwe_name")
+            ))
 
 
 def save_threat_intelligence(records):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM threat_intelligence")
-    for r in records:
-        cursor.execute("""
-            INSERT OR IGNORE INTO threat_intelligence
-            (cve_id, cve_vendor, cve_product, asset_id, asset_name, asset_type,
-             asset_vendor, asset_product, business_criticality, cvss_score, severity,
-             epss_score, epss_percentile, published, date_added, days_since_published,
-             days_since_kev_added, known_ransomware, vuln_type, description,
-             match_confidence, scope, source, threat_score, threat_pressure_factor,
-             alert_level, version_confirmed, detected_version, confirmation_method,
-             is_behind_waf, waf_name, has_public_exploit, exploit_count, exploit_ids)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            r["cve_id"], r["cve_vendor"], r["cve_product"],
-            r["asset_id"], r["asset_name"], r["asset_type"],
-            r["asset_vendor"], r["asset_product"], r["business_criticality"],
-            r.get("cvss_score"), r.get("severity"),
-            r.get("epss_score"), r.get("epss_percentile"),
-            r.get("published"), r.get("date_added"),
-            r.get("days_since_published"), r.get("days_since_kev_added"),
-            int(r.get("known_ransomware", False)),
-            r.get("vuln_type"), r.get("description"),
-            r.get("match_confidence"), r.get("scope"), r.get("source"),
-            r.get("threat_score"), r.get("threat_pressure_factor"), r.get("alert_level"),
-            int(r.get("version_confirmed", False)),
-            r.get("detected_version"),
-            r.get("confirmation_method", "none"),
-            int(r.get("is_behind_waf", False)),
-            r.get("waf_name"),
-            int(r.get("has_public_exploit", False)),
-            r.get("exploit_count", 0),
-            r.get("exploit_ids", "")
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM threat_intelligence")
+        for r in records:
+            cursor.execute("""
+                INSERT OR IGNORE INTO threat_intelligence
+                (cve_id, cve_vendor, cve_product, asset_id, asset_name, asset_type,
+                 asset_vendor, asset_product, business_criticality, cvss_score, severity,
+                 epss_score, epss_percentile, published, date_added, days_since_published,
+                 days_since_kev_added, known_ransomware, vuln_type, description,
+                 match_confidence, scope, source, threat_score, threat_pressure_factor,
+                 alert_level, version_confirmed, detected_version, confirmation_method,
+                 is_behind_waf, waf_name, has_public_exploit, exploit_count, exploit_ids,
+                 cwe_id, cwe_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                r["cve_id"], r["cve_vendor"], r["cve_product"],
+                r["asset_id"], r["asset_name"], r["asset_type"],
+                r["asset_vendor"], r["asset_product"], r["business_criticality"],
+                r.get("cvss_score"), r.get("severity"),
+                r.get("epss_score"), r.get("epss_percentile"),
+                r.get("published"), r.get("date_added"),
+                r.get("days_since_published"), r.get("days_since_kev_added"),
+                int(r.get("known_ransomware", False)),
+                r.get("vuln_type"), r.get("description"),
+                r.get("match_confidence"), r.get("scope"), r.get("source"),
+                r.get("threat_score"), r.get("threat_pressure_factor"), r.get("alert_level"),
+                int(r.get("version_confirmed", False)),
+                r.get("detected_version"),
+                r.get("confirmation_method", "none"),
+                int(r.get("is_behind_waf", False)),
+                r.get("waf_name"),
+                int(r.get("has_public_exploit", False)),
+                r.get("exploit_count", 0),
+                r.get("exploit_ids", ""),
+                r.get("cwe_id"), r.get("cwe_name")
+            ))
 
 
 def save_alerts(alerts_list):
-    conn = get_connection()
-    cursor = conn.cursor()
-    for a in alerts_list:
-        cursor.execute("""
-            INSERT INTO alerts
-            (timestamp, reason, alert_level, cve_id, cve_vendor, cve_product,
-             asset_id, asset_name, vuln_type, cvss_score, epss_score,
-             threat_score, threat_pressure_factor, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            a["timestamp"], a["reason"], a["alert_level"],
-            a["cve_id"], a["cve_vendor"], a["cve_product"],
-            a["asset_id"], a["asset_name"], a["vuln_type"],
-            a.get("cvss_score"), a.get("epss_score"),
-            a.get("threat_score"), a.get("threat_pressure_factor"),
-            a.get("description")
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for a in alerts_list:
+            cursor.execute("""
+                INSERT INTO alerts
+                (timestamp, reason, alert_level, cve_id, cve_vendor, cve_product,
+                 asset_id, asset_name, vuln_type, cvss_score, epss_score,
+                 threat_score, threat_pressure_factor, description)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                a["timestamp"], a["reason"], a["alert_level"],
+                a["cve_id"], a["cve_vendor"], a["cve_product"],
+                a["asset_id"], a["asset_name"], a["vuln_type"],
+                a.get("cvss_score"), a.get("epss_score"),
+                a.get("threat_score"), a.get("threat_pressure_factor"),
+                a.get("description")
+            ))
 
 
 def save_asset_services(asset_id, services):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM asset_services WHERE asset_id = ?", (asset_id,))
-    for s in services:
-        if s.get("state") != "open":
-            continue
-        cursor.execute("""
-            INSERT INTO asset_services
-            (asset_id, port, state, service_name, product, version, cpe)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            asset_id, s.get("port"), s.get("state"),
-            s.get("service_name"), s.get("product"),
-            s.get("version"), json.dumps(s.get("cpe", []))
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM asset_services WHERE asset_id = ?", (asset_id,))
+        for s in services:
+            if s.get("state") != "open":
+                continue
+            cursor.execute("""
+                INSERT INTO asset_services
+                (asset_id, port, state, service_name, product, version, cpe)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                asset_id, s.get("port"), s.get("state"),
+                s.get("service_name"), s.get("product"),
+                s.get("version"), json.dumps(s.get("cpe", []))
+            ))
 
 
 def save_asset_technologies(asset_id, technologies):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM asset_technologies WHERE asset_id = ?", (asset_id,))
-    for t in technologies:
-        cursor.execute("""
-            INSERT INTO asset_technologies
-            (asset_id, technology_name, category, version, source, confidence)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            asset_id, t.get("name"), t.get("category"),
-            t.get("version"), t.get("source", "signature"),
-            t.get("confidence", "medium")
-        ))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM asset_technologies WHERE asset_id = ?", (asset_id,))
+        for t in technologies:
+            cursor.execute("""
+                INSERT INTO asset_technologies
+                (asset_id, technology_name, category, version, source, confidence)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                asset_id, t.get("name"), t.get("category"),
+                t.get("version"), t.get("source", "signature"),
+                t.get("confidence", "medium")
+            ))
 
 
 def save_asset_waf_info(asset_id, is_behind_waf, waf_name, detected_by):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR REPLACE INTO asset_waf_info
-        (asset_id, is_behind_waf, waf_name, detected_by)
-        VALUES (?, ?, ?, ?)
-    """, (asset_id, int(is_behind_waf), waf_name, detected_by))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO asset_waf_info
+            (asset_id, is_behind_waf, waf_name, detected_by)
+            VALUES (?, ?, ?, ?)
+        """, (asset_id, int(is_behind_waf), waf_name, detected_by))
 
 
 # ── Reads ─────────────────────────────────────────────────────

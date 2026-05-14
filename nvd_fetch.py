@@ -1,10 +1,46 @@
 import requests
-import json
 import time
 import os
 from database import get_cisa_kev, get_assets, save_enriched_cves as db_save_enriched_cves
 
 NVD_API_KEY = os.getenv("NVD_API_KEY", "")
+
+# Known CWE-ID → human-readable name mapping (common ones)
+CWE_NAMES = {
+    "CWE-20":   "Improper Input Validation",
+    "CWE-22":   "Path Traversal",
+    "CWE-74":   "Injection",
+    "CWE-77":   "Command Injection",
+    "CWE-78":   "OS Command Injection",
+    "CWE-79":   "Cross-Site Scripting (XSS)",
+    "CWE-89":   "SQL Injection",
+    "CWE-94":   "Code Injection",
+    "CWE-119":  "Buffer Overflow",
+    "CWE-120":  "Classic Buffer Overflow",
+    "CWE-121":  "Stack-based Buffer Overflow",
+    "CWE-122":  "Heap-based Buffer Overflow",
+    "CWE-125":  "Out-of-bounds Read",
+    "CWE-190":  "Integer Overflow",
+    "CWE-200":  "Exposure of Sensitive Information",
+    "CWE-269":  "Improper Privilege Management",
+    "CWE-276":  "Incorrect Default Permissions",
+    "CWE-284":  "Improper Access Control",
+    "CWE-285":  "Improper Authorization",
+    "CWE-287":  "Improper Authentication",
+    "CWE-306":  "Missing Authentication for Critical Function",
+    "CWE-307":  "Brute Force Protection Missing",
+    "CWE-352":  "Cross-Site Request Forgery (CSRF)",
+    "CWE-400":  "Uncontrolled Resource Consumption",
+    "CWE-416":  "Use After Free",
+    "CWE-434":  "Unrestricted File Upload",
+    "CWE-502":  "Deserialization of Untrusted Data",
+    "CWE-601":  "URL Redirection to Untrusted Site",
+    "CWE-611":  "XML External Entity (XXE)",
+    "CWE-787":  "Out-of-bounds Write",
+    "CWE-798":  "Use of Hard-coded Credentials",
+    "CWE-918":  "Server-Side Request Forgery (SSRF)",
+    "CWE-1321": "Prototype Pollution",
+}
 
 
 def is_relevant(vuln, assets):
@@ -31,46 +67,89 @@ def extract_cpe_ranges(cve_data):
                     if not cpe_match.get("vulnerable", False):
                         continue
                     ranges.append({
-                        "criteria":                  cpe_match.get("criteria", ""),
-                        "version_start_including":   cpe_match.get("versionStartIncluding"),
-                        "version_start_excluding":   cpe_match.get("versionStartExcluding"),
-                        "version_end_including":     cpe_match.get("versionEndIncluding"),
-                        "version_end_excluding":     cpe_match.get("versionEndExcluding"),
+                        "criteria":                cpe_match.get("criteria", ""),
+                        "version_start_including": cpe_match.get("versionStartIncluding"),
+                        "version_start_excluding": cpe_match.get("versionStartExcluding"),
+                        "version_end_including":   cpe_match.get("versionEndIncluding"),
+                        "version_end_excluding":   cpe_match.get("versionEndExcluding"),
                     })
     except Exception:
         pass
     return ranges
 
 
+def extract_cwe(cve_data):
+    """
+    Extract CWE ID and human-readable name from NVD weaknesses field.
+    Returns (cwe_id, cwe_name) e.g. ("CWE-119", "Buffer Overflow")
+    or (None, None) if not available.
+    """
+    try:
+        weaknesses = cve_data.get("weaknesses", [])
+        if not weaknesses:
+            return None, None
+        value = weaknesses[0]["description"][0]["value"]
+        # Skip placeholder values NVD uses when CWE is unknown
+        if not value or value.startswith("NVD-CWE"):
+            return None, None
+        cwe_id   = value                   # e.g. "CWE-119"
+        cwe_name = CWE_NAMES.get(cwe_id)  # lookup; None if not in our map
+        return cwe_id, cwe_name
+    except (KeyError, IndexError, TypeError):
+        return None, None
+
+
 def fetch_nvd_details(cve_id):
+    """
+    Fetch CVSS, severity, published date, CPE ranges, and CWE from NVD.
+    Retries up to 3 times with exponential backoff (2s, 4s) on failure.
+    """
     url     = f"https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}"
     headers = {"apiKey": NVD_API_KEY} if NVD_API_KEY else {}
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        data     = response.json()
-        cve      = data["vulnerabilities"][0]["cve"]
+    null_result = {
+        "cvss_score": None, "severity":   None,
+        "published":  None, "cpe_ranges": [],
+        "cwe_id":     None, "cwe_name":   None,
+    }
 
+    for attempt in range(1, 4):  # attempts 1, 2, 3
         try:
-            cvss_score = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseScore"]
-            severity   = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseSeverity"]
-        except Exception:
+            response = requests.get(url, headers=headers, timeout=10)
+            data     = response.json()
+            cve      = data["vulnerabilities"][0]["cve"]
+
             try:
-                cvss_score = cve["metrics"]["cvssMetricV2"][0]["cvssData"]["baseScore"]
-                severity   = cve["metrics"]["cvssMetricV2"][0]["baseSeverity"]
+                cvss_score = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseScore"]
+                severity   = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseSeverity"]
             except Exception:
-                cvss_score = None
-                severity   = None
+                try:
+                    cvss_score = cve["metrics"]["cvssMetricV2"][0]["cvssData"]["baseScore"]
+                    severity   = cve["metrics"]["cvssMetricV2"][0]["baseSeverity"]
+                except Exception:
+                    cvss_score = None
+                    severity   = None
 
-        cpe_ranges = extract_cpe_ranges(cve)
+            cpe_ranges       = extract_cpe_ranges(cve)
+            cwe_id, cwe_name = extract_cwe(cve)
 
-        return {
-            "cvss_score": cvss_score,
-            "severity":   severity,
-            "published":  cve["published"][:10],
-            "cpe_ranges": cpe_ranges,
-        }
-    except Exception:
-        return {"cvss_score": None, "severity": None, "published": None, "cpe_ranges": []}
+            return {
+                "cvss_score": cvss_score,
+                "severity":   severity,
+                "published":  cve["published"][:10],
+                "cpe_ranges": cpe_ranges,
+                "cwe_id":     cwe_id,
+                "cwe_name":   cwe_name,
+            }
+
+        except Exception as e:
+            if attempt < 3:
+                wait = 2 ** attempt  # 2s then 4s
+                print(f"  [RETRY] {cve_id} attempt {attempt + 1}/3 (waiting {wait}s) — {e}")
+                time.sleep(wait)
+            else:
+                print(f"  [FAIL]  {cve_id} — all 3 attempts failed: {e}")
+
+    return null_result
 
 
 def fetch_epss(cve_id):
@@ -115,11 +194,15 @@ def enrich_cves():
                   "cvss_score": nvd["cvss_score"],
                   "severity":   nvd["severity"],
                   "published":  nvd["published"],
-                  "cpe_ranges": nvd["cpe_ranges"]}
+                  "cpe_ranges": nvd["cpe_ranges"],
+                  "cwe_id":     nvd["cwe_id"],
+                  "cwe_name":   nvd["cwe_name"]}
 
-        cpe_count = len(nvd["cpe_ranges"])
-        if cpe_count:
-            print(f"  → {cpe_count} CPE version range(s) extracted")
+        if len(nvd["cpe_ranges"]):
+            print(f"  → {len(nvd['cpe_ranges'])} CPE version range(s) extracted")
+        if nvd["cwe_id"]:
+            label = f"{nvd['cwe_id']} ({nvd['cwe_name']})" if nvd["cwe_name"] else nvd["cwe_id"]
+            print(f"  → CWE: {label}")
 
         enriched.append(record)
         time.sleep(0.6)
