@@ -6,6 +6,7 @@ from database import (
     get_exploitdb_info,
     save_matched_cves as db_save_matched_cves
 )
+from mitre_attack import get_attack_mapping
 
 WEB_VULN_KEYWORDS = {
     "rce": [
@@ -211,6 +212,9 @@ def run_matching():
                 "exploit_ids":          exploit_info["exploit_ids"],
                 "cwe_id":               cve.get("cwe_id"),
                 "cwe_name":             cve.get("cwe_name"),
+                **{f"attack_{k}": v for k, v in get_attack_mapping(
+                    detect_vuln_type(cve["description"])
+                ).items()},
             })
 
     db_save_matched_cves(matched)
@@ -222,8 +226,8 @@ def run_matching():
 
     print(f"Total matched   (high confidence):  {len(matched)}")
     print(f"Version confirmed:                  {confirmed}")
-    print(f"  ├─ via CPE ranges (high):         {cpe_confirmed}")
-    print(f"  └─ via text search (medium):      {txt_confirmed}")
+    print(f"  +- via CPE ranges (high):         {cpe_confirmed}")
+    print(f"  +- via text search (medium):      {txt_confirmed}")
     print(f"With public exploits (Exploit-DB):  {with_exploits}")
     print(f"Total review    (low confidence):   {len(review)}")
 

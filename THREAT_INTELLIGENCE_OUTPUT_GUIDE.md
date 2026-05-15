@@ -11,19 +11,29 @@
 
 ```
 targets.json
-    ↓
-Asset Monitor       → discovers live web assets (HTTP + Nmap + Tech + WAF)
-    ↓
-CISA KEV            → 1500+ confirmed-exploited vulnerabilities
-    ↓
-NVD + EPSS          → CVSS scores + CPE version ranges + exploitation probability
-    ↓
-Exploit-DB          → checks if a public exploit exists per CVE
-    ↓
-Matching Engine     → links CVEs to assets (vendor + product + CPE version)
-    ↓
-TPF Engine          → computes Threat Pressure Factor per CVE-Asset pair
-    ↓
+    |
+    v
+Asset Monitor       -> discovers live web assets (HTTP + Nmap + Tech + WAF)
+    |
+    v
+CISA KEV            -> 1500+ confirmed-exploited vulnerabilities
+    |
+    v
+NVD + EPSS          -> CVSS + CPE version ranges + CWE + exploitation probability
+    |
+    v
+Exploit-DB          -> checks if a public exploit exists per CVE
+    |
+    v
+MITRE ATT&CK        -> maps vuln_type to tactics and techniques
+    |
+    v
+Matching Engine     -> links CVEs to assets (vendor + product + CPE version)
+    |
+    v
+TPF Engine          -> computes Threat Pressure Factor per CVE-Asset pair
+    |
+    v
 threat_intelligence_output.json
 ```
 
@@ -32,7 +42,7 @@ threat_intelligence_output.json
 ## Your Integration Point
 
 ```
-Final Risk Probability = base_probability × threat_pressure_factor
+Final Risk Probability = base_probability x threat_pressure_factor
 ```
 
 `threat_pressure_factor` ranges from **1.0** (no threat) to **2.0** (maximum threat).
@@ -62,9 +72,11 @@ Final Risk Probability = base_probability × threat_pressure_factor
 | `cve_vendor` | string | `"Microsoft"` | Vendor named in the CVE record. |
 | `cve_product` | string | `"IIS"` | Product named in the CVE record. |
 | `description` | string | `"...buffer overflow..."` | Full CVE description from NVD. |
-| `vuln_type` | string | `"rce"` | Vulnerability category detected from description. |
+| `vuln_type` | string | `"rce"` | Vulnerability category detected from description keywords. |
+| `cwe_id` | string | `"CWE-120"` | Common Weakness Enumeration ID from NVD — identifies the root cause weakness class. `null` if NVD has no CWE data. |
+| `cwe_name` | string | `"Classic Buffer Overflow"` | Human-readable name of the weakness. `null` if not available. |
 
-**Vulnerability type values:**
+**`vuln_type` values:**
 
 | Value | Meaning | TPF Weight |
 |---|---|---|
@@ -77,6 +89,20 @@ Final Risk Probability = base_probability × threat_pressure_factor
 | `other` | Other web vulnerability | +0.05 |
 | `unknown` | Could not be determined | +0.00 |
 
+**Common `cwe_id` values:**
+
+| CWE ID | Name |
+|---|---|
+| CWE-78 | OS Command Injection |
+| CWE-79 | Cross-Site Scripting |
+| CWE-89 | SQL Injection |
+| CWE-119 / CWE-120 | Buffer Overflow |
+| CWE-287 | Improper Authentication |
+| CWE-502 | Deserialization of Untrusted Data |
+| CWE-918 | Server-Side Request Forgery |
+
+> `cwe_id` and `cwe_name` are informational — not used in TPF calculation, but can be used as categorical features in your model.
+
 ---
 
 ### Risk Scores
@@ -86,7 +112,7 @@ Final Risk Probability = base_probability × threat_pressure_factor
 | `cvss_score` | float | `9.8` | CVSS v3.1 base score. Range: 0.0–10.0. |
 | `severity` | string | `"CRITICAL"` | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` |
 | `epss_score` | float | `0.94411` | 30-day exploitation probability. Range: 0.0–1.0. |
-| `epss_percentile` | float | `0.99978` | Ranking among all CVEs. `0.9998` = top 0.02%. |
+| `epss_percentile` | float | `0.99979` | Ranking among all CVEs. `0.9998` = top 0.02%. |
 | `known_ransomware` | bool | `false` | Confirmed use in ransomware campaigns. |
 
 ---
@@ -97,8 +123,8 @@ Final Risk Probability = base_probability × threat_pressure_factor
 |---|---|---|---|
 | `published` | string | `"2017-03-27"` | CVE publication date. |
 | `date_added` | string | `"2021-11-03"` | Date CISA confirmed real-world exploitation. |
-| `days_since_published` | int | `3329` | Age of the vulnerability in days. |
-| `days_since_kev_added` | int | `1647` | Days since CISA confirmation. |
+| `days_since_published` | int | `3336` | Age of the vulnerability in days. |
+| `days_since_kev_added` | int | `1654` | Days since CISA confirmation. |
 
 ---
 
@@ -112,23 +138,23 @@ Final Risk Probability = base_probability × threat_pressure_factor
 
 ---
 
-### Version Confirmation Fields ← Important for Prediction Model
+### Version Confirmation Fields
 
 | Field | Type | Example | Description |
 |---|---|---|---|
 | `version_confirmed` | bool | `true` | Whether the detected version is confirmed vulnerable. |
 | `detected_version` | string | `"8.5"` | Version string detected by Nmap on the live asset. |
-| `confirmation_method` | string | `"text_search"` | **How** the version was confirmed. See table below. |
+| `confirmation_method` | string | `"cpe_range"` | How the version was confirmed. See table below. |
 
-**`confirmation_method` values — critical for interpreting `version_confirmed`:**
+**`confirmation_method` values:**
 
 | Value | Meaning | Confidence | TPF Bonus |
 |---|---|---|---|
 | `cpe_range` | Version falls within NVD structured CPE range | **High** | +0.05 |
 | `text_search` | Version string found in CVE description text (fallback) | **Medium** | +0.00 |
-| `none` | Version not confirmed — asset may or may not be vulnerable | Low | +0.00 |
+| `none` | Version not confirmed | Low | +0.00 |
 
-> **Important note for Prediction Team:** `version_confirmed=true` with `confirmation_method="text_search"` means the version number appeared in the CVE description text, but this is a fallback method used when NVD has no structured CPE data. It should be weighted lower than `cpe_range` confirmation. The `version_confirmed=true` + `confirmation_method="cpe_range"` combination is the highest-confidence signal.
+> `version_confirmed=true` with `confirmation_method="text_search"` is medium confidence only. Weight it lower than `cpe_range` in your model.
 
 ---
 
@@ -141,7 +167,7 @@ Final Risk Probability = base_probability × threat_pressure_factor
 
 ---
 
-### Exploit-DB Fields ← New
+### Exploit-DB Fields
 
 | Field | Type | Example | Description |
 |---|---|---|---|
@@ -149,7 +175,32 @@ Final Risk Probability = base_probability × threat_pressure_factor
 | `exploit_count` | int | `2` | Number of public exploits found. |
 | `exploit_ids` | string | `"41738,41992"` | Comma-separated Exploit-DB IDs. Look up at `exploit-db.com/exploits/{id}` |
 
-> **Note for Prediction Team:** `has_public_exploit=true` is a strong signal. It means any attacker — even unskilled — can download and run a working exploit. This significantly lowers the barrier to exploitation compared to theoretical vulnerabilities.
+> `has_public_exploit=true` means any attacker — even unskilled — can download and run a working exploit. This is a strong signal for high final risk probability.
+
+---
+
+### MITRE ATT&CK Fields
+
+| Field | Type | Example | Description |
+|---|---|---|---|
+| `attack_technique_id` | string\|null | `"T1190"` | MITRE ATT&CK Technique ID mapped from `vuln_type`. |
+| `attack_technique_name` | string\|null | `"Exploit Public-Facing Application"` | Full name of the ATT&CK technique. |
+| `attack_tactic` | string\|null | `"Initial Access"` | The ATT&CK tactic (phase of the attack chain). `null` if `vuln_type=unknown`. |
+
+**Full `vuln_type` → ATT&CK mapping:**
+
+| vuln_type | Technique ID | Technique Name | Tactic |
+|---|---|---|---|
+| `rce` | T1190 | Exploit Public-Facing Application | Initial Access |
+| `sqli` | T1190 | Exploit Public-Facing Application | Initial Access |
+| `auth_bypass` | T1078 | Valid Accounts | Defense Evasion |
+| `path_traversal` | T1083 | File and Directory Discovery | Discovery |
+| `ssrf` | T1090 | Proxy | Command and Control |
+| `xss` | T1059.007 | JavaScript | Execution |
+| `other` | T1190 | Exploit Public-Facing Application | Initial Access |
+| `unknown` | null | null | null |
+
+> `attack_technique_id` and `attack_tactic` are informational context fields. They are not used in TPF calculation but are highly useful for threat reporting, security dashboards, and SOC workflows that align with ATT&CK.
 
 ---
 
@@ -165,9 +216,9 @@ Final Risk Probability = base_probability × threat_pressure_factor
 
 | TPF | Alert Level |
 |---|---|
-| ≥ 1.7 | `CRITICAL` |
-| ≥ 1.5 | `HIGH` |
-| ≥ 1.3 | `MEDIUM` |
+| >= 1.7 | `CRITICAL` |
+| >= 1.5 | `HIGH` |
+| >= 1.3 | `MEDIUM` |
 | < 1.3 | `LOW` |
 
 ---
@@ -176,13 +227,13 @@ Final Risk Probability = base_probability × threat_pressure_factor
 
 ```
 threat_score =
-    CVSS component          (≥9.0→+0.20 | ≥7.0→+0.13 | ≥4.0→+0.07)
-  + EPSS component          (≥0.7→+0.20 | ≥0.4→+0.13 | ≥0.1→+0.07)
+    CVSS component          (>=9.0->+0.20 | >=7.0->+0.13 | >=4.0->+0.07)
+  + EPSS component          (>=0.7->+0.20 | >=0.4->+0.13 | >=0.1->+0.07)
   + KEV presence            +0.13  (always — all records are KEV confirmed)
   + known_ransomware        +0.07  (if true)
-  + vuln_type weight        (rce→+0.20 ... xss→+0.08)
-  + business_criticality    (critical→+0.20 ... low→+0.00)
-  + recency                 (≤30d→+0.10 | ≤90d→+0.06 | ≤365d→+0.03)
+  + vuln_type weight        (rce->+0.20 ... xss->+0.08)
+  + business_criticality    (critical->+0.20 ... low->+0.00)
+  + recency                 (<=30d->+0.10 | <=90d->+0.06 | <=365d->+0.03)
   + version_confirmed       +0.05  (ONLY if confirmation_method = "cpe_range")
   + has_public_exploit      +0.10  (if true)
 
@@ -195,24 +246,23 @@ threat_pressure_factor = 1.0 + threat_score
 ## Worked Example — CVE-2017-7269
 
 ```
-CVSS 9.8  (≥9.0)                      → +0.20
-EPSS 0.944 (≥0.7)                     → +0.20
-KEV presence                          → +0.13
-known_ransomware = false               → +0.00
-vuln_type = rce                       → +0.20
-business_criticality = high           → +0.13
-days_since_kev_added = 1647 (>365d)   → +0.00
-version_confirmed = true
-  but confirmation_method = text_search → +0.00  ← no bonus (medium confidence)
-has_public_exploit = true             → +0.10
-                                    ─────────
-threat_score (raw)                    = 0.96
-threat_score (capped at 1.0)          = 0.96
-threat_pressure_factor                = 1.0 + 0.96 = 1.96
-alert_level                           = CRITICAL (≥1.7)
+CVSS 9.8  (>=9.0)                         -> +0.20
+EPSS 0.944 (>=0.7)                        -> +0.20
+KEV presence                              -> +0.13
+known_ransomware = false                  -> +0.00
+vuln_type = rce                           -> +0.20
+business_criticality = high               -> +0.13
+days_since_kev_added = 1654 (>365d)       -> +0.00
+version_confirmed via cpe_range           -> +0.05
+has_public_exploit = true (2 exploits)    -> +0.10
+cwe_id = CWE-120 (informational)          -> +0.00
+attack_technique_id = T1190 (informational) -> +0.00
+                                        ---------
+threat_score (raw)                        = 1.01
+threat_score (capped at 1.0)              = 1.0
+threat_pressure_factor                    = 1.0 + 1.0 = 2.0
+alert_level                               = CRITICAL (>=1.7)
 ```
-
-> **Note:** In the actual output you may see `threat_pressure_factor=2.0` because the score was capped at 1.0 before adding the base.
 
 ---
 
@@ -225,17 +275,27 @@ with open("threat_intelligence_output.json") as f:
     ti_records = json.load(f)
 
 for record in ti_records:
-    tpf    = record["threat_pressure_factor"]   # 1.0–2.0
+    tpf    = record["threat_pressure_factor"]   # 1.0-2.0
     cm     = record["confirmation_method"]       # "cpe_range" / "text_search" / "none"
     has_ex = record["has_public_exploit"]        # bool
+    cwe    = record["cwe_id"]                    # e.g. "CWE-120" or None
+    tactic = record["attack_tactic"]             # e.g. "Initial Access" or None
 
-    # Optional: adjust weight based on confirmation confidence
-    confidence_weight = {"cpe_range": 1.0, "text_search": 0.8, "none": 0.6}.get(cm, 0.6)
+    # Optional: use confirmation_method as confidence weight
+    confidence_weight = {
+        "cpe_range":   1.0,
+        "text_search": 0.8,
+        "none":        0.6
+    }.get(cm, 0.6)
 
-    base_probability = your_model.predict(record)
+    base_probability  = your_model.predict(record)
     final_probability = base_probability * tpf * confidence_weight
 
-    print(f"{record['asset_id']} | {record['cve_id']} | TPF={tpf} | final={final_probability:.3f}")
+    print(
+        f"{record['asset_id']} | {record['cve_id']} | "
+        f"CWE={cwe} | ATT&CK={tactic} | "
+        f"TPF={tpf} | final={final_probability:.3f}"
+    )
 ```
 
 ---
@@ -245,9 +305,10 @@ for record in ti_records:
 | Source | What It Provides | Update Frequency |
 |---|---|---|
 | CISA KEV | Confirmed exploited vulnerabilities | Continuously updated |
-| NVD | CVSS scores + CPE version ranges + published date | Within 24–48h of CVE |
+| NVD | CVSS + CPE ranges + CWE + published date | Within 24-48h of CVE |
 | EPSS | 30-day exploitation probability | Daily |
 | Exploit-DB | Public exploit availability + exploit IDs | Per pipeline run |
+| MITRE ATT&CK | Tactic + technique mapping per vuln_type | Static mapping (updated manually) |
 | Nmap | Live service version on asset | Per pipeline run |
 | HTTP Fingerprinting | Vendor, product, WAF, technologies | Per pipeline run |
 
@@ -258,4 +319,5 @@ for record in ti_records:
 - Every record has `match_confidence = "high"` — low confidence matches are excluded.
 - All records come from CISA KEV — real-world exploitation confirmed by the US government.
 - `version_confirmed` must be read together with `confirmation_method` for correct interpretation.
+- `cwe_id`, `cwe_name`, `attack_technique_id`, `attack_technique_name`, `attack_tactic` are context fields — not used in TPF but valuable for reporting and model features.
 - The file is regenerated on every `python main.py` run. Always use the latest version.

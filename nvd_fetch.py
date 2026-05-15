@@ -199,10 +199,10 @@ def enrich_cves():
                   "cwe_name":   nvd["cwe_name"]}
 
         if len(nvd["cpe_ranges"]):
-            print(f"  → {len(nvd['cpe_ranges'])} CPE version range(s) extracted")
+            print(f"  -> {len(nvd['cpe_ranges'])} CPE version range(s) extracted")
         if nvd["cwe_id"]:
             label = f"{nvd['cwe_id']} ({nvd['cwe_name']})" if nvd["cwe_name"] else nvd["cwe_id"]
-            print(f"  → CWE: {label}")
+            print(f"  -> CWE: {label}")
 
         enriched.append(record)
         time.sleep(0.6)

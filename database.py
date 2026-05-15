@@ -110,9 +110,12 @@ def init_db():
             version_confirmed    INTEGER DEFAULT 0,
             detected_version     TEXT,
             confirmation_method  TEXT DEFAULT 'none',
-            has_public_exploit   INTEGER DEFAULT 0,
-            exploit_count        INTEGER DEFAULT 0,
-            exploit_ids          TEXT,
+            has_public_exploit      INTEGER DEFAULT 0,
+            exploit_count           INTEGER DEFAULT 0,
+            exploit_ids             TEXT,
+            attack_technique_id     TEXT,
+            attack_technique_name   TEXT,
+            attack_tactic           TEXT,
             UNIQUE(cve_id, asset_id)
         )
     """)
@@ -154,6 +157,9 @@ def init_db():
             has_public_exploit      INTEGER DEFAULT 0,
             exploit_count           INTEGER DEFAULT 0,
             exploit_ids             TEXT,
+            attack_technique_id     TEXT,
+            attack_technique_name   TEXT,
+            attack_tactic           TEXT,
             last_updated            TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(cve_id, asset_id)
         )
@@ -235,11 +241,17 @@ def init_db():
         "ALTER TABLE threat_intelligence ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
         "ALTER TABLE threat_intelligence ADD COLUMN exploit_count       INTEGER DEFAULT 0",
         "ALTER TABLE threat_intelligence ADD COLUMN exploit_ids         TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN cwe_id              TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN cwe_name            TEXT",
-        "ALTER TABLE enriched_cves       ADD COLUMN cpe_ranges          TEXT",
-        "ALTER TABLE enriched_cves       ADD COLUMN cwe_id              TEXT",
-        "ALTER TABLE enriched_cves       ADD COLUMN cwe_name            TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN cwe_id                TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN cwe_name              TEXT",
+        "ALTER TABLE enriched_cves       ADD COLUMN cpe_ranges            TEXT",
+        "ALTER TABLE enriched_cves       ADD COLUMN cwe_id                TEXT",
+        "ALTER TABLE enriched_cves       ADD COLUMN cwe_name              TEXT",
+        "ALTER TABLE matched_cves        ADD COLUMN attack_technique_id   TEXT",
+        "ALTER TABLE matched_cves        ADD COLUMN attack_technique_name TEXT",
+        "ALTER TABLE matched_cves        ADD COLUMN attack_tactic         TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN attack_technique_id   TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN attack_technique_name TEXT",
+        "ALTER TABLE threat_intelligence ADD COLUMN attack_tactic         TEXT",
     ]
     for sql in migrations:
         try:
@@ -330,9 +342,10 @@ def save_matched_cves(matches):
                  epss_score, epss_percentile, published, date_added, known_ransomware,
                  vuln_type, description, match_confidence, scope, source,
                  version_confirmed, detected_version, confirmation_method,
-                 has_public_exploit, exploit_count, exploit_ids, cwe_id, cwe_name)
+                 has_public_exploit, exploit_count, exploit_ids, cwe_id, cwe_name,
+                 attack_technique_id, attack_technique_name, attack_tactic)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 m["cve_id"], m["cve_vendor"], m["cve_product"],
                 m["asset_id"], m["asset_name"], m["asset_type"],
@@ -349,7 +362,9 @@ def save_matched_cves(matches):
                 int(m.get("has_public_exploit", False)),
                 m.get("exploit_count", 0),
                 m.get("exploit_ids", ""),
-                m.get("cwe_id"), m.get("cwe_name")
+                m.get("cwe_id"), m.get("cwe_name"),
+                m.get("attack_technique_id"), m.get("attack_technique_name"),
+                m.get("attack_tactic")
             ))
 
 
@@ -367,9 +382,10 @@ def save_threat_intelligence(records):
                  match_confidence, scope, source, threat_score, threat_pressure_factor,
                  alert_level, version_confirmed, detected_version, confirmation_method,
                  is_behind_waf, waf_name, has_public_exploit, exploit_count, exploit_ids,
-                 cwe_id, cwe_name)
+                 cwe_id, cwe_name,
+                 attack_technique_id, attack_technique_name, attack_tactic)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 r["cve_id"], r["cve_vendor"], r["cve_product"],
                 r["asset_id"], r["asset_name"], r["asset_type"],
@@ -390,7 +406,9 @@ def save_threat_intelligence(records):
                 int(r.get("has_public_exploit", False)),
                 r.get("exploit_count", 0),
                 r.get("exploit_ids", ""),
-                r.get("cwe_id"), r.get("cwe_name")
+                r.get("cwe_id"), r.get("cwe_name"),
+                r.get("attack_technique_id"), r.get("attack_technique_name"),
+                r.get("attack_tactic")
             ))
 
 

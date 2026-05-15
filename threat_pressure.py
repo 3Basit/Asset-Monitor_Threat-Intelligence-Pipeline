@@ -152,6 +152,9 @@ def run_threat_pressure():
             "exploit_ids":            m.get("exploit_ids", ""),
             "cwe_id":                 m.get("cwe_id"),
             "cwe_name":               m.get("cwe_name"),
+            "attack_technique_id":    m.get("attack_technique_id"),
+            "attack_technique_name":  m.get("attack_technique_name"),
+            "attack_tactic":          m.get("attack_tactic"),
         }
 
         output.append(record)
@@ -199,8 +202,8 @@ def run_threat_pressure():
 
     print(f"Total records:        {len(output)}")
     print(f"Version confirmed:    {confirmed}")
-    print(f"  ├─ cpe_range:       {cpe_count}  (high confidence)")
-    print(f"  └─ text_search:     {txt_count}  (medium confidence)")
+    print(f"  +- cpe_range:       {cpe_count}  (high confidence)")
+    print(f"  +- text_search:     {txt_count}  (medium confidence)")
     print(f"Behind WAF:           {waf_count}")
     print(f"With public exploits: {exploit_count}")
     print(f"New/escalated alerts: {len(alerts)}")
