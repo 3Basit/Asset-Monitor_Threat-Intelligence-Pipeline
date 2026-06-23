@@ -10,6 +10,9 @@ import time
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from datetime import datetime, timezone
+
+import config
+from logger import get_logger
 from database import (
     save_assets,
     save_asset_services,
@@ -17,9 +20,11 @@ from database import (
     save_asset_waf_info
 )
 
-NMAP_WEB_PORTS    = "80,443,8080,8443,8000,8888"
-SCAN_DELAY_SECONDS = 2  # Polite delay between target scans to avoid crawler detection
-USER_AGENT         = "GradProject-AssetMonitor/1.0 (authorized-security-research; contact: security@example.com)"
+log = get_logger("asset_monitor")
+
+NMAP_WEB_PORTS    = config.NMAP_WEB_PORTS
+SCAN_DELAY_SECONDS = config.SCAN_DELAY_SECONDS
+USER_AGENT         = config.USER_AGENT
 
 # ── Phase 3: Technology Signatures ────────────────────────
 
@@ -115,7 +120,13 @@ WAF_SIGNATURES = [
 ]
 
 def load_targets():
-    with open("targets.json") as f:
+    targets_path = config.TARGETS_FILE
+    if not os.path.exists(targets_path):
+        raise FileNotFoundError(
+            f"targets.json not found at {targets_path}\n"
+            "Create a targets.json with your target definitions."
+        )
+    with open(targets_path, encoding="utf-8") as f:
         return json.load(f)
 
 def get_session():
@@ -155,7 +166,7 @@ def fingerprint_target(target, session):
     }
 
     if not target.get("authorized", False):
-        print(f"  [SKIP] Skipping {url} - not authorized")
+        log.info("Skipping %s — not authorized", url)
         return result
 
     headers = {"User-Agent": USER_AGENT}
@@ -232,19 +243,19 @@ def fingerprint_target(target, session):
         result["scan_status"]   = "failed"
         result["error_type"]    = "ConnectTimeout"
         result["error_message"] = str(e)[:200]
-        print(f"  [WARN] ConnectTimeout: {url}")
+        log.warning("ConnectTimeout: %s", url)
 
     except requests.exceptions.ConnectionError as e:
         result["scan_status"]   = "failed"
         result["error_type"]    = "ConnectionError"
         result["error_message"] = str(e)[:200]
-        print(f"  [WARN] ConnectionError: {url}")
+        log.warning("ConnectionError: %s", url)
 
     except Exception as e:
         result["scan_status"]   = "failed"
         result["error_type"]    = type(e).__name__
         result["error_message"] = str(e)[:200]
-        print(f"  [WARN] Error: {url} - {e}")
+        log.warning("Error scanning %s: %s", url, e)
 
     return result
 
@@ -449,7 +460,7 @@ def load_previous_snapshot():
     try:
         with open("previous_assets_snapshot.json") as f:
             return json.load(f)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
         return []
 
 def save_current_snapshot(assets):
@@ -667,7 +678,7 @@ def run_monitor():
                     result["ip"] = parsed["ip"]
             else:
                 result["nmap_scan_status"] = "failed"
-                print(f"  [WARN] Nmap failed: {nmap_result['error']}")
+                log.warning("Nmap failed: %s", nmap_result['error'])
 
         # Phase 3 — Technology + WAF Detection
         result["tech_detection_status"] = "skipped"

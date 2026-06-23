@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 DB_FILE = "threat_intelligence.db"
@@ -26,6 +27,11 @@ def print_rows(rows):
 
 
 def main():
+    if not os.path.exists(DB_FILE):
+        print(f"Database not found: {DB_FILE}")
+        print("Run the pipeline first: python main.py")
+        return
+
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()

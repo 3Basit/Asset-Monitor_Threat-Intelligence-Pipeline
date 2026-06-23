@@ -1,5 +1,8 @@
 import json
 from datetime import datetime, timezone
+
+import config
+from logger import get_logger
 from database import (
     get_matched_cves,
     get_asset_waf_info,
@@ -25,6 +28,8 @@ CRITICALITY_WEIGHTS = {
     "medium":   0.07,
     "low":      0.00
 }
+
+log = get_logger("threat_pressure")
 
 ALERT_LEVELS = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 
@@ -53,8 +58,8 @@ def compute_tpf(record):
     score += CRITICALITY_WEIGHTS.get(record.get("business_criticality", "low"), 0.0)
 
     try:
-        date_added = datetime.strptime(record["date_added"], "%Y-%m-%d")
-        days_since = (datetime.now() - date_added).days
+        date_added = datetime.strptime(record["date_added"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        days_since = (datetime.now(timezone.utc) - date_added).days
         if days_since <= 30:    score += 0.10
         elif days_since <= 90:  score += 0.06
         elif days_since <= 365: score += 0.03
@@ -86,7 +91,7 @@ def run_threat_pressure():
     matches = get_matched_cves()
 
     if not matches:
-        print("[WARN] matched_cves table is empty — run Step 3 (matching) first.")
+        log.warning("matched_cves table is empty — run Step 3 (matching) first.")
         return
 
     previous_state = get_previous_ti_state()
@@ -99,14 +104,14 @@ def run_threat_pressure():
 
         try:
             days_since_published = (
-                datetime.now() - datetime.strptime(m["published"], "%Y-%m-%d")
+                datetime.now(timezone.utc) - datetime.strptime(m["published"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
             ).days
         except Exception:
             days_since_published = None
 
         try:
             days_since_kev_added = (
-                datetime.now() - datetime.strptime(m["date_added"], "%Y-%m-%d")
+                datetime.now(timezone.utc) - datetime.strptime(m["date_added"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
             ).days
         except Exception:
             days_since_kev_added = None
@@ -186,14 +191,16 @@ def run_threat_pressure():
                 "description":            m["description"],
             })
 
+    try:
+        with open(config.TI_OUTPUT_FILE, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
+        with open(config.ALERTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(alerts, f, indent=2, ensure_ascii=False)
+    except OSError as e:
+        log.warning("Could not write JSON output files: %s", e)
+
     db_save_ti(output)
     db_save_alerts(alerts)
-
-    with open("threat_intelligence_output.json", "w") as f:
-        json.dump(output, f, indent=2)
-
-    with open("alerts.json", "w") as f:
-        json.dump(alerts, f, indent=2)
 
     confirmed     = sum(1 for r in output if r.get("version_confirmed"))
     cpe_count     = sum(1 for r in output if r.get("confirmation_method") == "cpe_range")

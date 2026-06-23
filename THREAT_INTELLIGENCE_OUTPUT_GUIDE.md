@@ -1,9 +1,10 @@
 # Threat Intelligence Output — Documentation for Prediction Model Team
 
 **From:** Threat Intelligence Module
-**File:** `threat_intelligence_output.json`
+**File:** `threat_intelligence_output.json` (path configurable via `CRD_TI_OUTPUT_FILE`)
 **Format:** JSON Array — one object per (CVE × Asset) pair
 **Updated:** Every pipeline run (`python main.py`)
+**Configuration:** All pipeline settings (API keys, rate limits, output paths) managed in `config.py` — override via `CRD_*` environment variables
 
 ---
 

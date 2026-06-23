@@ -1,9 +1,14 @@
 import requests
 import time
 import os
+
+import config
+from logger import get_logger
 from database import get_cisa_kev, get_assets, save_enriched_cves as db_save_enriched_cves
 
-NVD_API_KEY = os.getenv("NVD_API_KEY", "")
+log = get_logger("nvd_fetch")
+
+NVD_API_KEY = config.NVD_API_KEY
 
 # Known CWE-ID → human-readable name mapping (common ones)
 CWE_NAMES = {
@@ -61,8 +66,8 @@ def extract_cpe_ranges(cve_data):
     ranges = []
     try:
         configurations = cve_data.get("configurations", [])
-        for config in configurations:
-            for node in config.get("nodes", []):
+        for cfg in configurations:
+            for node in cfg.get("nodes", []):
                 for cpe_match in node.get("cpeMatch", []):
                     if not cpe_match.get("vulnerable", False):
                         continue
@@ -115,6 +120,7 @@ def fetch_nvd_details(cve_id):
     for attempt in range(1, 4):  # attempts 1, 2, 3
         try:
             response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
             data     = response.json()
             cve      = data["vulnerabilities"][0]["cve"]
 
@@ -135,7 +141,7 @@ def fetch_nvd_details(cve_id):
             return {
                 "cvss_score": cvss_score,
                 "severity":   severity,
-                "published":  cve["published"][:10],
+                "published":  (cve.get("published") or "")[:10] or None,
                 "cpe_ranges": cpe_ranges,
                 "cwe_id":     cwe_id,
                 "cwe_name":   cwe_name,
@@ -144,10 +150,10 @@ def fetch_nvd_details(cve_id):
         except Exception as e:
             if attempt < 3:
                 wait = 2 ** attempt  # 2s then 4s
-                print(f"  [RETRY] {cve_id} attempt {attempt + 1}/3 (waiting {wait}s) — {e}")
+                log.warning("%s attempt %d/3 (waiting %ds): %s", cve_id, attempt + 1, wait, e)
                 time.sleep(wait)
             else:
-                print(f"  [FAIL]  {cve_id} — all 3 attempts failed: {e}")
+                log.error("%s — all 3 attempts failed: %s", cve_id, e)
 
     return null_result
 
@@ -174,11 +180,11 @@ def enrich_cves():
     assets    = get_assets()
 
     if not cisa_data:
-        print("[ERROR] cisa_kev table is empty. Run Step 1 first.")
+        log.error("cisa_kev table is empty. Run Step 1 first.")
         return
 
     if not assets:
-        print("[ERROR] assets table is empty. Run Asset Monitor first.")
+        log.error("assets table is empty. Run Asset Monitor first.")
         return
 
     relevant = [v for v in cisa_data if is_relevant(v, assets)]
@@ -205,7 +211,7 @@ def enrich_cves():
             print(f"  -> CWE: {label}")
 
         enriched.append(record)
-        time.sleep(0.6)
+        time.sleep(config.NVD_DELAY_WITH_KEY if NVD_API_KEY else config.NVD_DELAY_WITHOUT_KEY)
 
     db_save_enriched_cves(enriched)
     print(f"Saved {len(enriched)} enriched CVEs to DB")

@@ -1,4 +1,7 @@
 import json
+import re
+
+from logger import get_logger
 from database import (
     get_enriched_cves,
     get_assets,
@@ -7,6 +10,8 @@ from database import (
     save_matched_cves as db_save_matched_cves
 )
 from mitre_attack import get_attack_mapping
+
+log = get_logger("matching")
 
 WEB_VULN_KEYWORDS = {
     "rce": [
@@ -39,8 +44,15 @@ def is_web_asset(asset):
 
 
 def compute_match_confidence(cve, asset):
-    vendor_match  = cve["vendor"].lower() == asset["vendor"].lower()
-    product_match = any(kw.lower() in cve["product"].lower() for kw in asset["keywords"])
+    cve_vendor = (cve.get("vendor") or "").lower()
+    asset_vendor = (asset.get("vendor") or "").lower()
+    cve_product = (cve.get("product") or "").lower()
+    vendor_match = cve_vendor and asset_vendor and cve_vendor == asset_vendor
+    product_match = any(
+        kw.lower() in cve_product
+        for kw in asset.get("keywords", [])
+        if len(kw) >= 3
+    )
     return "high" if (vendor_match and product_match) else "low"
 
 
@@ -179,12 +191,15 @@ def check_version_confirmed(cve, asset_id):
         f"{cve.get('description', '')} {cve.get('product', '')}"
     ).lower()
 
-    if detected_version.lower() in desc_text:
+    escaped = re.escape(detected_version)
+    if re.search(r'(?<!\d)' + escaped + r'(?!\d)', desc_text):
         return True, detected_version, "text_search", None
 
     major_minor = ".".join(detected_version.split(".")[:2])
-    if major_minor and major_minor in desc_text:
-        return True, detected_version, "text_search", None
+    if major_minor and len(major_minor) >= 3:
+        escaped_mm = re.escape(major_minor)
+        if re.search(r'(?<!\d)' + escaped_mm + r'(?!\d)', desc_text):
+            return True, detected_version, "text_search", None
 
     return False, detected_version, "none", None
 
@@ -194,10 +209,10 @@ def run_matching():
     assets = get_assets()
 
     if not cves:
-        print("[ERROR] enriched_cves table empty. Run Step 2 first.")
+        log.error("enriched_cves table empty. Run Step 2 first.")
         return
     if not assets:
-        print("[ERROR] assets table empty. Run Asset Monitor first.")
+        log.error("assets table empty. Run Asset Monitor first.")
         return
 
     web_assets = [a for a in assets if is_web_asset(a)]
@@ -227,6 +242,7 @@ def run_matching():
 
             # -- Exploit-DB lookup ---------------------
             exploit_info = get_exploitdb_info(cve["cve_id"])
+            vuln_type = detect_vuln_type(cve["description"])
 
             # Build human-readable CPE range summary for transparency
             cpe_range_summary = None
@@ -264,7 +280,7 @@ def run_matching():
                 "asset_product":        asset["product"],
                 "business_criticality": asset["business_criticality"],
                 "match_confidence":     confidence,
-                "vuln_type":            detect_vuln_type(cve["description"]),
+                "vuln_type":            vuln_type,
                 "scope":                "web",
                 "source":               "CISA_KEV + NVD + EPSS + ExploitDB",
                 "version_confirmed":    version_confirmed,
@@ -277,7 +293,7 @@ def run_matching():
                 "cwe_id":               cve.get("cwe_id"),
                 "cwe_name":             cve.get("cwe_name"),
                 **{f"attack_{k}": v for k, v in get_attack_mapping(
-                    detect_vuln_type(cve["description"])
+                    vuln_type
                 ).items()},
             })
 

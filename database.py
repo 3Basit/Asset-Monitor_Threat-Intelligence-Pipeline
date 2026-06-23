@@ -3,7 +3,12 @@ import json
 from contextlib import contextmanager
 from datetime import datetime
 
-DB_FILE = "threat_intelligence.db"
+import config
+from logger import get_logger
+
+log = get_logger("database")
+
+DB_FILE = config.DB_PATH
 
 
 @contextmanager
@@ -30,242 +35,244 @@ def get_connection():
 
 def init_db():
     conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS assets (
-            asset_id             TEXT PRIMARY KEY,
-            asset_name           TEXT,
-            asset_type           TEXT,
-            business_criticality TEXT,
-            vendor               TEXT,
-            product              TEXT,
-            keywords             TEXT,
-            created_at           TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS assets (
+                asset_id             TEXT PRIMARY KEY,
+                asset_name           TEXT,
+                asset_type           TEXT,
+                business_criticality TEXT,
+                vendor               TEXT,
+                product              TEXT,
+                keywords             TEXT,
+                created_at           TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS cisa_kev (
-            cve_id           TEXT PRIMARY KEY,
-            vendor           TEXT,
-            product          TEXT,
-            date_added       TEXT,
-            known_ransomware INTEGER,
-            description      TEXT
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS cisa_kev (
+                cve_id           TEXT PRIMARY KEY,
+                vendor           TEXT,
+                product          TEXT,
+                date_added       TEXT,
+                known_ransomware INTEGER,
+                description      TEXT
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS enriched_cves (
-            cve_id           TEXT PRIMARY KEY,
-            vendor           TEXT,
-            product          TEXT,
-            date_added       TEXT,
-            known_ransomware INTEGER,
-            description      TEXT,
-            cvss_score       REAL,
-            severity         TEXT,
-            published        TEXT,
-            epss_score       REAL,
-            epss_percentile  REAL,
-            cpe_ranges       TEXT
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS enriched_cves (
+                cve_id           TEXT PRIMARY KEY,
+                vendor           TEXT,
+                product          TEXT,
+                date_added       TEXT,
+                known_ransomware INTEGER,
+                description      TEXT,
+                cvss_score       REAL,
+                severity         TEXT,
+                published        TEXT,
+                epss_score       REAL,
+                epss_percentile  REAL,
+                cpe_ranges       TEXT
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS exploitdb_cves (
-            cve_id             TEXT PRIMARY KEY,
-            has_public_exploit INTEGER DEFAULT 0,
-            exploit_count      INTEGER DEFAULT 0,
-            exploit_ids        TEXT,
-            checked_at         TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS exploitdb_cves (
+                cve_id             TEXT PRIMARY KEY,
+                has_public_exploit INTEGER DEFAULT 0,
+                exploit_count      INTEGER DEFAULT 0,
+                exploit_ids        TEXT,
+                checked_at         TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS matched_cves (
-            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-            cve_id               TEXT,
-            cve_vendor           TEXT,
-            cve_product          TEXT,
-            asset_id             TEXT,
-            asset_name           TEXT,
-            asset_type           TEXT,
-            asset_vendor         TEXT,
-            asset_product        TEXT,
-            business_criticality TEXT,
-            cvss_score           REAL,
-            severity             TEXT,
-            epss_score           REAL,
-            epss_percentile      REAL,
-            published            TEXT,
-            date_added           TEXT,
-            known_ransomware     INTEGER,
-            vuln_type            TEXT,
-            description          TEXT,
-            match_confidence     TEXT,
-            scope                TEXT,
-            source               TEXT,
-            version_confirmed    INTEGER DEFAULT 0,
-            detected_version     TEXT,
-            confirmation_method  TEXT DEFAULT 'none',
-            cpe_range_matched    TEXT,
-            has_public_exploit      INTEGER DEFAULT 0,
-            exploit_count           INTEGER DEFAULT 0,
-            exploit_ids             TEXT,
-            attack_technique_id     TEXT,
-            attack_technique_name   TEXT,
-            attack_tactic           TEXT,
-            UNIQUE(cve_id, asset_id)
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS matched_cves (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                cve_id               TEXT,
+                cve_vendor           TEXT,
+                cve_product          TEXT,
+                asset_id             TEXT,
+                asset_name           TEXT,
+                asset_type           TEXT,
+                asset_vendor         TEXT,
+                asset_product        TEXT,
+                business_criticality TEXT,
+                cvss_score           REAL,
+                severity             TEXT,
+                epss_score           REAL,
+                epss_percentile      REAL,
+                published            TEXT,
+                date_added           TEXT,
+                known_ransomware     INTEGER,
+                vuln_type            TEXT,
+                description          TEXT,
+                match_confidence     TEXT,
+                scope                TEXT,
+                source               TEXT,
+                version_confirmed    INTEGER DEFAULT 0,
+                detected_version     TEXT,
+                confirmation_method  TEXT DEFAULT 'none',
+                cpe_range_matched    TEXT,
+                has_public_exploit      INTEGER DEFAULT 0,
+                exploit_count           INTEGER DEFAULT 0,
+                exploit_ids             TEXT,
+                attack_technique_id     TEXT,
+                attack_technique_name   TEXT,
+                attack_tactic           TEXT,
+                UNIQUE(cve_id, asset_id)
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS threat_intelligence (
-            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-            cve_id                  TEXT,
-            cve_vendor              TEXT,
-            cve_product             TEXT,
-            asset_id                TEXT,
-            asset_name              TEXT,
-            asset_type              TEXT,
-            asset_vendor            TEXT,
-            asset_product           TEXT,
-            business_criticality    TEXT,
-            cvss_score              REAL,
-            severity                TEXT,
-            epss_score              REAL,
-            epss_percentile         REAL,
-            published               TEXT,
-            date_added              TEXT,
-            days_since_published    INTEGER,
-            days_since_kev_added    INTEGER,
-            known_ransomware        INTEGER,
-            vuln_type               TEXT,
-            description             TEXT,
-            match_confidence        TEXT,
-            scope                   TEXT,
-            source                  TEXT,
-            threat_score            REAL,
-            threat_pressure_factor  REAL,
-            alert_level             TEXT,
-            version_confirmed       INTEGER DEFAULT 0,
-            detected_version        TEXT,
-            confirmation_method     TEXT DEFAULT 'none',
-            cpe_range_matched       TEXT,
-            is_behind_waf           INTEGER DEFAULT 0,
-            waf_name                TEXT,
-            has_public_exploit      INTEGER DEFAULT 0,
-            exploit_count           INTEGER DEFAULT 0,
-            exploit_ids             TEXT,
-            attack_technique_id     TEXT,
-            attack_technique_name   TEXT,
-            attack_tactic           TEXT,
-            last_updated            TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(cve_id, asset_id)
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS threat_intelligence (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                cve_id                  TEXT,
+                cve_vendor              TEXT,
+                cve_product             TEXT,
+                asset_id                TEXT,
+                asset_name              TEXT,
+                asset_type              TEXT,
+                asset_vendor            TEXT,
+                asset_product           TEXT,
+                business_criticality    TEXT,
+                cvss_score              REAL,
+                severity                TEXT,
+                epss_score              REAL,
+                epss_percentile         REAL,
+                published               TEXT,
+                date_added              TEXT,
+                days_since_published    INTEGER,
+                days_since_kev_added    INTEGER,
+                known_ransomware        INTEGER,
+                vuln_type               TEXT,
+                description             TEXT,
+                match_confidence        TEXT,
+                scope                   TEXT,
+                source                  TEXT,
+                threat_score            REAL,
+                threat_pressure_factor  REAL,
+                alert_level             TEXT,
+                version_confirmed       INTEGER DEFAULT 0,
+                detected_version        TEXT,
+                confirmation_method     TEXT DEFAULT 'none',
+                cpe_range_matched       TEXT,
+                is_behind_waf           INTEGER DEFAULT 0,
+                waf_name                TEXT,
+                has_public_exploit      INTEGER DEFAULT 0,
+                exploit_count           INTEGER DEFAULT 0,
+                exploit_ids             TEXT,
+                attack_technique_id     TEXT,
+                attack_technique_name   TEXT,
+                attack_tactic           TEXT,
+                last_updated            TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(cve_id, asset_id)
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS alerts (
-            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp               TEXT,
-            reason                  TEXT,
-            alert_level             TEXT,
-            cve_id                  TEXT,
-            cve_vendor              TEXT,
-            cve_product             TEXT,
-            asset_id                TEXT,
-            asset_name              TEXT,
-            vuln_type               TEXT,
-            cvss_score              REAL,
-            epss_score              REAL,
-            threat_score            REAL,
-            threat_pressure_factor  REAL,
-            description             TEXT
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alerts (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp               TEXT,
+                reason                  TEXT,
+                alert_level             TEXT,
+                cve_id                  TEXT,
+                cve_vendor              TEXT,
+                cve_product             TEXT,
+                asset_id                TEXT,
+                asset_name              TEXT,
+                vuln_type               TEXT,
+                cvss_score              REAL,
+                epss_score              REAL,
+                threat_score            REAL,
+                threat_pressure_factor  REAL,
+                description             TEXT
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS asset_services (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            asset_id     TEXT,
-            port         INTEGER,
-            state        TEXT,
-            service_name TEXT,
-            product      TEXT,
-            version      TEXT,
-            cpe          TEXT,
-            detected_at  TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS asset_services (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id     TEXT,
+                port         INTEGER,
+                state        TEXT,
+                service_name TEXT,
+                product      TEXT,
+                version      TEXT,
+                cpe          TEXT,
+                detected_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS asset_technologies (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            asset_id        TEXT,
-            technology_name TEXT,
-            category        TEXT,
-            version         TEXT,
-            source          TEXT,
-            confidence      TEXT,
-            detected_at     TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS asset_technologies (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id        TEXT,
+                technology_name TEXT,
+                category        TEXT,
+                version         TEXT,
+                source          TEXT,
+                confidence      TEXT,
+                detected_at     TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS asset_waf_info (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            asset_id      TEXT UNIQUE,
-            is_behind_waf INTEGER DEFAULT 0,
-            waf_name      TEXT,
-            detected_by   TEXT,
-            detected_at   TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS asset_waf_info (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id      TEXT UNIQUE,
+                is_behind_waf INTEGER DEFAULT 0,
+                waf_name      TEXT,
+                detected_by   TEXT,
+                detected_at   TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    # ── Schema migrations (safe on existing DB) ───────────────
-    migrations = [
-        "ALTER TABLE matched_cves        ADD COLUMN version_confirmed   INTEGER DEFAULT 0",
-        "ALTER TABLE matched_cves        ADD COLUMN detected_version    TEXT",
-        "ALTER TABLE matched_cves        ADD COLUMN confirmation_method TEXT DEFAULT 'none'",
-        "ALTER TABLE matched_cves        ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
-        "ALTER TABLE matched_cves        ADD COLUMN exploit_count       INTEGER DEFAULT 0",
-        "ALTER TABLE matched_cves        ADD COLUMN exploit_ids         TEXT",
-        "ALTER TABLE matched_cves        ADD COLUMN cwe_id              TEXT",
-        "ALTER TABLE matched_cves        ADD COLUMN cwe_name            TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN version_confirmed   INTEGER DEFAULT 0",
-        "ALTER TABLE threat_intelligence ADD COLUMN detected_version    TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN confirmation_method TEXT DEFAULT 'none'",
-        "ALTER TABLE threat_intelligence ADD COLUMN is_behind_waf       INTEGER DEFAULT 0",
-        "ALTER TABLE threat_intelligence ADD COLUMN waf_name            TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
-        "ALTER TABLE threat_intelligence ADD COLUMN exploit_count       INTEGER DEFAULT 0",
-        "ALTER TABLE threat_intelligence ADD COLUMN exploit_ids         TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN cwe_id                TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN cwe_name              TEXT",
-        "ALTER TABLE enriched_cves       ADD COLUMN cpe_ranges            TEXT",
-        "ALTER TABLE enriched_cves       ADD COLUMN cwe_id                TEXT",
-        "ALTER TABLE enriched_cves       ADD COLUMN cwe_name              TEXT",
-        "ALTER TABLE matched_cves        ADD COLUMN attack_technique_id   TEXT",
-        "ALTER TABLE matched_cves        ADD COLUMN attack_technique_name TEXT",
-        "ALTER TABLE matched_cves        ADD COLUMN attack_tactic         TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN attack_technique_id   TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN attack_technique_name TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN attack_tactic         TEXT",
-        "ALTER TABLE matched_cves        ADD COLUMN cpe_range_matched     TEXT",
-        "ALTER TABLE threat_intelligence ADD COLUMN cpe_range_matched     TEXT",
-    ]
-    for sql in migrations:
-        try:
-            cursor.execute(sql)
-        except sqlite3.OperationalError:
-            pass
+        # ── Schema migrations (safe on existing DB) ───────────────
+        migrations = [
+            "ALTER TABLE matched_cves        ADD COLUMN version_confirmed   INTEGER DEFAULT 0",
+            "ALTER TABLE matched_cves        ADD COLUMN detected_version    TEXT",
+            "ALTER TABLE matched_cves        ADD COLUMN confirmation_method TEXT DEFAULT 'none'",
+            "ALTER TABLE matched_cves        ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
+            "ALTER TABLE matched_cves        ADD COLUMN exploit_count       INTEGER DEFAULT 0",
+            "ALTER TABLE matched_cves        ADD COLUMN exploit_ids         TEXT",
+            "ALTER TABLE matched_cves        ADD COLUMN cwe_id              TEXT",
+            "ALTER TABLE matched_cves        ADD COLUMN cwe_name            TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN version_confirmed   INTEGER DEFAULT 0",
+            "ALTER TABLE threat_intelligence ADD COLUMN detected_version    TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN confirmation_method TEXT DEFAULT 'none'",
+            "ALTER TABLE threat_intelligence ADD COLUMN is_behind_waf       INTEGER DEFAULT 0",
+            "ALTER TABLE threat_intelligence ADD COLUMN waf_name            TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN has_public_exploit  INTEGER DEFAULT 0",
+            "ALTER TABLE threat_intelligence ADD COLUMN exploit_count       INTEGER DEFAULT 0",
+            "ALTER TABLE threat_intelligence ADD COLUMN exploit_ids         TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN cwe_id                TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN cwe_name              TEXT",
+            "ALTER TABLE enriched_cves       ADD COLUMN cpe_ranges            TEXT",
+            "ALTER TABLE enriched_cves       ADD COLUMN cwe_id                TEXT",
+            "ALTER TABLE enriched_cves       ADD COLUMN cwe_name              TEXT",
+            "ALTER TABLE matched_cves        ADD COLUMN attack_technique_id   TEXT",
+            "ALTER TABLE matched_cves        ADD COLUMN attack_technique_name TEXT",
+            "ALTER TABLE matched_cves        ADD COLUMN attack_tactic         TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN attack_technique_id   TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN attack_technique_name TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN attack_tactic         TEXT",
+            "ALTER TABLE matched_cves        ADD COLUMN cpe_range_matched     TEXT",
+            "ALTER TABLE threat_intelligence ADD COLUMN cpe_range_matched     TEXT",
+        ]
+        for sql in migrations:
+            try:
+                cursor.execute(sql)
+            except sqlite3.OperationalError:
+                pass
 
-    conn.commit()
-    conn.close()
-    print("Database initialized OK")
+        conn.commit()
+    finally:
+        conn.close()
+    log.info("Database initialized OK")
 
 
 # ── Writes ────────────────────────────────────────────────────
@@ -496,25 +503,23 @@ def save_asset_waf_info(asset_id, is_behind_waf, waf_name, detected_by):
 # ── Reads ─────────────────────────────────────────────────────
 
 def get_assets():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM assets")
-    rows = cursor.fetchall()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM assets")
+        rows = cursor.fetchall()
     assets = []
     for row in rows:
         a = dict(row)
-        a["keywords"] = json.loads(a["keywords"])
+        a["keywords"] = json.loads(a.get("keywords") or "[]")
         assets.append(a)
     return assets
 
 
 def get_cisa_kev():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM cisa_kev")
-    rows = cursor.fetchall()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM cisa_kev")
+        rows = cursor.fetchall()
     result = []
     for r in rows:
         d = dict(r)
@@ -524,33 +529,31 @@ def get_cisa_kev():
 
 
 def get_enriched_cves():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM enriched_cves")
-    rows = cursor.fetchall()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM enriched_cves")
+        rows = cursor.fetchall()
     result = []
     for r in rows:
         d = dict(r)
         d["known_ransomware"] = bool(d["known_ransomware"])
         try:
             d["cpe_ranges"] = json.loads(d.get("cpe_ranges") or "[]")
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             d["cpe_ranges"] = []
         result.append(d)
     return result
 
 
 def get_exploitdb_info(cve_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT has_public_exploit, exploit_count, exploit_ids "
-        "FROM exploitdb_cves WHERE cve_id = ?",
-        (cve_id,)
-    )
-    row = cursor.fetchone()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT has_public_exploit, exploit_count, exploit_ids "
+            "FROM exploitdb_cves WHERE cve_id = ?",
+            (cve_id,)
+        )
+        row = cursor.fetchone()
     if row:
         return {
             "has_public_exploit": bool(row["has_public_exploit"]),
@@ -561,11 +564,10 @@ def get_exploitdb_info(cve_id):
 
 
 def get_matched_cves():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM matched_cves WHERE match_confidence = 'high'")
-    rows = cursor.fetchall()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM matched_cves WHERE match_confidence = 'high'")
+        rows = cursor.fetchall()
     result = []
     for r in rows:
         d = dict(r)
@@ -577,48 +579,45 @@ def get_matched_cves():
 
 
 def get_asset_services(asset_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM asset_services WHERE asset_id = ? AND state = 'open'",
-        (asset_id,)
-    )
-    rows = cursor.fetchall()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM asset_services WHERE asset_id = ? AND state = 'open'",
+            (asset_id,)
+        )
+        rows = cursor.fetchall()
     result = []
     for r in rows:
         d = dict(r)
         try:
-            d["cpe"] = json.loads(d.get("cpe", "[]"))
-        except Exception:
+            d["cpe"] = json.loads(d.get("cpe") or "[]")
+        except (json.JSONDecodeError, TypeError):
             d["cpe"] = []
         result.append(d)
     return result
 
 
 def get_asset_waf_info(asset_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT is_behind_waf, waf_name FROM asset_waf_info WHERE asset_id = ?",
-        (asset_id,)
-    )
-    row = cursor.fetchone()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT is_behind_waf, waf_name FROM asset_waf_info WHERE asset_id = ?",
+            (asset_id,)
+        )
+        row = cursor.fetchone()
     if row:
         return {"is_behind_waf": bool(row["is_behind_waf"]), "waf_name": row["waf_name"]}
     return {"is_behind_waf": False, "waf_name": None}
 
 
 def get_previous_ti_state():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT cve_id, asset_id, threat_pressure_factor, alert_level "
-        "FROM threat_intelligence"
-    )
-    rows = cursor.fetchall()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT cve_id, asset_id, threat_pressure_factor, alert_level "
+            "FROM threat_intelligence"
+        )
+        rows = cursor.fetchall()
     return {
         f"{r['cve_id']}|{r['asset_id']}": {
             "tpf":         r["threat_pressure_factor"],

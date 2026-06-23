@@ -27,9 +27,29 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+dist/
+build/
 
-# ── VS Code ───────────────────────────────────────────────────
+# ── Virtual environments ─────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── IDE ───────────────────────────────────────────────────────
 .vscode/
+.idea/
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+
+# ── External Data (cloned repos — too large for Git) ──────────
+data/vcdb/
+
+# ── Prediction Model Outputs ─────────────────────────────────
+prediction_output.json
+company_profile.json
+prediction_model/saved_model/
 
 # ── Windows ───────────────────────────────────────────────────
 Thumbs.db
