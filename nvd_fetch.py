@@ -78,47 +78,57 @@ def fetch_nvd_by_keyword(keyword, max_results=20):
     """Search NVD directly for HIGH/CRITICAL CVEs matching a product keyword.
 
     Used as fallback when a detected technology has no CISA KEV entries.
+    Retries up to 3 times with exponential backoff (2s, 4s) on failure,
+    matching the retry behavior of fetch_nvd_details.
     """
     url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     params = {"keywordSearch": keyword, "resultsPerPage": max_results}
     headers = {"apiKey": NVD_API_KEY} if NVD_API_KEY else {}
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=15)
-        resp.raise_for_status()
-        results = []
-        for item in resp.json().get("vulnerabilities", []):
-            cve = item.get("cve", {})
-            cve_id = cve.get("id", "")
-            if not cve_id:
-                continue
-            desc = next(
-                (d["value"] for d in cve.get("descriptions", []) if d.get("lang") == "en"),
-                ""
-            )
-            cvss, severity = None, None
-            try:
-                cvss     = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseScore"]
-                severity = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseSeverity"]
-            except Exception:
+
+    for attempt in range(1, 4):  # attempts 1, 2, 3
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            resp.raise_for_status()
+            results = []
+            for item in resp.json().get("vulnerabilities", []):
+                cve = item.get("cve", {})
+                cve_id = cve.get("id", "")
+                if not cve_id:
+                    continue
+                desc = next(
+                    (d["value"] for d in cve.get("descriptions", []) if d.get("lang") == "en"),
+                    ""
+                )
+                cvss, severity = None, None
                 try:
-                    cvss     = cve["metrics"]["cvssMetricV2"][0]["cvssData"]["baseScore"]
-                    severity = cve["metrics"]["cvssMetricV2"][0]["baseSeverity"]
+                    cvss     = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseScore"]
+                    severity = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseSeverity"]
                 except Exception:
-                    pass
-            if cvss is not None and cvss < 7.0:
-                continue  # skip LOW / MEDIUM
-            results.append({
-                "cve_id":          cve_id,
-                "vendor":          keyword,
-                "product":         keyword,
-                "date_added":      None,
-                "known_ransomware": False,
-                "description":     desc,
-            })
-        return results
-    except Exception as e:
-        log.warning("NVD keyword search '%s' failed: %s", keyword, e)
-        return []
+                    try:
+                        cvss     = cve["metrics"]["cvssMetricV2"][0]["cvssData"]["baseScore"]
+                        severity = cve["metrics"]["cvssMetricV2"][0]["baseSeverity"]
+                    except Exception:
+                        pass
+                if cvss is not None and cvss < 7.0:
+                    continue  # skip LOW / MEDIUM
+                results.append({
+                    "cve_id":          cve_id,
+                    "vendor":          keyword,
+                    "product":         keyword,
+                    "date_added":      None,
+                    "known_ransomware": False,
+                    "description":     desc,
+                })
+            return results
+        except Exception as e:
+            if attempt < 3:
+                wait = 2 ** attempt  # 2s then 4s
+                log.warning("NVD keyword search '%s' attempt %d/3 (waiting %ds): %s",
+                            keyword, attempt + 1, wait, e)
+                time.sleep(wait)
+            else:
+                log.warning("NVD keyword search '%s' — all 3 attempts failed: %s", keyword, e)
+    return []
 
 
 def extract_cpe_ranges(cve_data):
