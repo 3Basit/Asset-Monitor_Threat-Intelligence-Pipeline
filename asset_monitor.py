@@ -215,6 +215,35 @@ def fingerprint_target(target, session):
             result["product"]    = "Tomcat"
             result["keywords"]   = ["tomcat", "apache tomcat"]
             result["confidence"] = "high"
+
+            # -- Tomcat version probe ------------------------------------------
+            # Coyote/1.1 reveals the connector version, not Tomcat's version.
+            # Tomcat's default error page (triggered by any nonexistent path)
+            # contains the real version: <h3>Apache Tomcat/9.0.54</h3>
+            # We make one extra request to extract it.
+            try:
+                import re as _re
+                probe_url = url.rstrip("/") + "/__version_probe_nonexistent_path_xyz__"
+                probe_resp = session.get(
+                    probe_url, headers=headers, timeout=(4, 8),
+                    allow_redirects=False
+                )
+                # Parse version from Tomcat error page body
+                tomcat_ver_match = _re.search(
+                    r"Apache\s+Tomcat[/\s]+(\d+\.\d+[\.\d]*)",
+                    probe_resp.text, _re.IGNORECASE
+                )
+                if tomcat_ver_match:
+                    result["tomcat_version"] = tomcat_ver_match.group(1)
+                    result["confidence"]     = "high"
+                    log.info("Tomcat version probe: %s → %s",
+                             url, result["tomcat_version"])
+                else:
+                    result["tomcat_version"] = None
+            except Exception:
+                result["tomcat_version"] = None
+            # ------------------------------------------------------------------
+
         elif "apache" in combined:
             result["vendor"]     = "Apache"
             result["product"]    = "HTTP Server"
@@ -696,6 +725,32 @@ def run_monitor():
             result["is_behind_waf"] = is_waf
             result["waf_name"]      = waf_name
 
+            # Inject Tomcat probe version into open_services so it reaches
+            # save_asset_services → get_asset_services → check_version_confirmed
+            tomcat_ver = result.get("tomcat_version")
+            if tomcat_ver:
+                result["open_services"] = [
+                    dict(s, version=tomcat_ver)
+                    if ("tomcat" in s.get("product", "").lower() or
+                        "coyote" in s.get("product", "").lower())
+                    else s
+                    for s in result.get("open_services", [])
+                ]
+                # Also add a synthetic service entry if Nmap missed the version
+                existing_versions = [
+                    s.get("version") for s in result["open_services"]
+                    if "tomcat" in s.get("product", "").lower()
+                ]
+                if not any(existing_versions):
+                    result["open_services"].append({
+                        "port":         80,
+                        "protocol":     "tcp",
+                        "service_name": "http",
+                        "product":      "Apache Tomcat",
+                        "version":      tomcat_ver,
+                        "extra_info":   "version from error-page probe"
+                    })
+
         current_assets.append(result)
 
         open_services = result.get("open_services", [])
@@ -720,6 +775,10 @@ def run_monitor():
             for t in techs[:3]:
                 print(f"     • {t['name']} ({t['category']}) [{t['confidence']}] via {t['source']}")
         print(f"  -> WAF detected:       {result['is_behind_waf']} {('(' + result['waf_name'] + ')') if result['waf_name'] else ''}")
+        if result.get("tomcat_version"):
+            print(f"  -> Tomcat version:     {result['tomcat_version']} (from error-page probe) ✓")
+        elif result.get("product") == "Tomcat":
+            print(f"  -> Tomcat version:     unknown (error page probe returned no version)")
 
     changes = detect_changes(previous, current_assets)
 
