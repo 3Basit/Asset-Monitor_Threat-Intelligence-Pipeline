@@ -208,7 +208,9 @@ def fingerprint_target(target, session):
         powered  = result["x_powered_by"] or ""
         combined = f"{server} {powered}".lower()
 
-        if "apache" in combined and "tomcat" in combined:
+        if "apache" in combined and ("tomcat" in combined or "coyote" in combined):
+            # Apache-Coyote/1.1 is the HTTP connector of Apache Tomcat.
+            # It is NOT Apache HTTP Server — different product, different CVEs.
             result["vendor"]     = "Apache"
             result["product"]    = "Tomcat"
             result["keywords"]   = ["tomcat", "apache tomcat"]

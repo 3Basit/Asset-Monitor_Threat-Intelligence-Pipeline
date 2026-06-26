@@ -298,6 +298,39 @@ def run_matching():
                 review.append(cve["cve_id"])
                 continue
 
+            # CISA KEV version sanity gate:
+            # CISA KEV CVEs pass without version confirmation by design (confirmed
+            # exploited in the wild). However, if the CVE has product-specific CPE
+            # ranges AND the detected version falls definitively outside ALL of them,
+            # route to review — the version mismatch is too large to ignore.
+            # Example: CVE-2017-7269 targets IIS 6.0 only; IIS 8.5 is NOT affected.
+            if in_cisa_kev and not version_confirmed and cve.get("cpe_ranges"):
+                services = get_asset_services(asset["asset_id"])
+                asset_kws = [
+                    kw.lower()
+                    for svc in services
+                    for kw in ([svc.get("product", ""), svc.get("service_name", "")])
+                    if kw
+                ]
+                product_ranges = [
+                    r for r in cve["cpe_ranges"]
+                    if not r.get("criteria", "").lower().startswith("cpe:2.3:o:")
+                    and any(
+                        kw in r.get("criteria", "").lower().split(":")[3:5]
+                        for kw in asset_kws if len(kw) > 2
+                    )
+                ]
+                # Only apply the gate when product-specific ranges exist.
+                # If they all say "version not in range", it's a mismatch.
+                if product_ranges:
+                    any_in_range = any(
+                        version_in_cpe_range(detected_version, r)
+                        for r in product_ranges
+                    )
+                    if not any_in_range and detected_version:
+                        review.append(cve["cve_id"])
+                        continue
+
             # -- Exploit-DB lookup ---------------------
             exploit_info = get_exploitdb_info(cve["cve_id"])
             vuln_type = detect_vuln_type(cve["description"])
