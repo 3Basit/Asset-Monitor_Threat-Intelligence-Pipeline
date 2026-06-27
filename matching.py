@@ -183,12 +183,25 @@ def check_version_confirmed(cve, asset_id):
         # CVE configurations often bundle OS/platform CPEs (Ubuntu, Debian, Xcode)
         # alongside the actual product CPE. Comparing a software version like
         # nginx 1.20.1 against an Apple Xcode range like <13.0 is a false positive.
-        asset_keywords = [
-            kw.lower()
+        # Build expanded keyword set: full names + individual tokens.
+        # Handles long Nmap service names like "Apache Tomcat/Coyote JSP engine"
+        # by splitting on whitespace/slashes so "tomcat" can match CPE field "tomcat".
+        import re as _re
+        _raw_kws = [
+            kw
             for svc in services
-            for kw in ([svc.get("product", ""), svc.get("service_name", "")])
+            for kw in [svc.get("product", ""), svc.get("service_name", "")]
             if kw
         ]
+        asset_keywords = set()
+        for raw in _raw_kws:
+            token = raw.lower().strip()
+            if len(token) > 2:
+                asset_keywords.add(token)
+            for part in _re.split(r'[\s/\-_]+', token):
+                if len(part) > 2:
+                    asset_keywords.add(part)
+
         def _criteria_matches_product(criteria):
             """Return True only if the CPE vendor or product field matches
             the detected asset technology.
@@ -303,25 +316,47 @@ def run_matching():
             # exploited in the wild). However, if the CVE has product-specific CPE
             # ranges AND the detected version falls definitively outside ALL of them,
             # route to review — the version mismatch is too large to ignore.
-            # Example: CVE-2017-7269 targets IIS 6.0 only; IIS 8.5 is NOT affected.
+            # Examples fixed:
+            #   CVE-2017-7269 (IIS 6.0 only)  → rejected for IIS 8.5
+            #   CVE-2021-41773 (Apache 2.4.49) → rejected for Apache 2.4.7
             if in_cisa_kev and not version_confirmed and cve.get("cpe_ranges"):
-                services = get_asset_services(asset["asset_id"])
-                asset_kws = [
-                    kw.lower()
-                    for svc in services
-                    for kw in ([svc.get("product", ""), svc.get("service_name", "")])
+                gate_services = get_asset_services(asset["asset_id"])
+                # Build tokenized keyword set (same logic as _criteria_matches_product)
+                import re as _re2
+                gate_kws = set()
+                for raw in [
+                    kw
+                    for svc in gate_services
+                    for kw in [svc.get("product", ""), svc.get("service_name", "")]
                     if kw
-                ]
+                ]:
+                    tok = raw.lower().strip()
+                    if len(tok) > 2:
+                        gate_kws.add(tok)
+                    for part in _re2.split(r'[\s/\-_]+', tok):
+                        if len(part) > 2:
+                            gate_kws.add(part)
+                # Also include asset-level short keywords (e.g. ["tomcat", "iis"])
+                for kw in (asset.get("keywords") or []):
+                    if kw and len(kw) > 2:
+                        gate_kws.add(kw.lower())
+
+                def _gate_matches(criteria):
+                    """Substring match of gate keywords against CPE vendor/product fields."""
+                    c = criteria.lower()
+                    if c.startswith("cpe:2.3:o:"):
+                        return False
+                    parts = c.split(":")
+                    if len(parts) < 5:
+                        return False
+                    v, p = parts[3], parts[4]
+                    return any(kw in v or kw in p for kw in gate_kws if len(kw) > 2)
+
                 product_ranges = [
                     r for r in cve["cpe_ranges"]
-                    if not r.get("criteria", "").lower().startswith("cpe:2.3:o:")
-                    and any(
-                        kw in r.get("criteria", "").lower().split(":")[3:5]
-                        for kw in asset_kws if len(kw) > 2
-                    )
+                    if _gate_matches(r.get("criteria", ""))
                 ]
                 # Only apply the gate when product-specific ranges exist.
-                # If they all say "version not in range", it's a mismatch.
                 if product_ranges:
                     any_in_range = any(
                         version_in_cpe_range(detected_version, r)
