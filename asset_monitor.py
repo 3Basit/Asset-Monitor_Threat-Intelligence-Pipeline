@@ -729,10 +729,11 @@ def run_monitor():
             # save_asset_services → get_asset_services → check_version_confirmed
             tomcat_ver = result.get("tomcat_version")
             if tomcat_ver:
+                # Probe succeeded: inject confirmed Tomcat version
                 result["open_services"] = [
                     dict(s, version=tomcat_ver)
-                    if ("tomcat" in s.get("product", "").lower() or
-                        "coyote" in s.get("product", "").lower())
+                    if (("tomcat" in s.get("product", "").lower() or
+                         "coyote" in s.get("product", "").lower()))
                     else s
                     for s in result.get("open_services", [])
                 ]
@@ -750,6 +751,20 @@ def run_monitor():
                         "version":      tomcat_ver,
                         "extra_info":   "version from error-page probe"
                     })
+            elif result.get("product") == "Tomcat":
+                # Probe FAILED: Coyote/1.1 is the HTTP connector version, NOT the
+                # Tomcat application version. Never use "1.1" for CVE CPE matching —
+                # "1.1 < 9.0.99" would be a meaningless false positive.
+                # Clear the version field on all Coyote/Tomcat services.
+                result["open_services"] = [
+                    dict(s, version=None)
+                    if (("tomcat" in s.get("product", "").lower() or
+                         "coyote" in s.get("product", "").lower()))
+                    else s
+                    for s in result.get("open_services", [])
+                ]
+                log.info("Tomcat probe failed for %s — Coyote connector version "
+                         "cleared to prevent false CPE matches", url)
 
         current_assets.append(result)
 
