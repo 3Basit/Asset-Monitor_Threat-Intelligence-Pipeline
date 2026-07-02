@@ -49,7 +49,8 @@ def compute_tpf(record):
         elif epss >= 0.4: score += 0.13
         elif epss >= 0.1: score += 0.07
 
-    score += 0.13  # KEV presence
+    if record.get("date_added"):  # Only for CISA KEV CVEs — NVD keyword fallback CVEs have date_added=None
+        score += 0.13
 
     if record.get("known_ransomware"):
         score += 0.07

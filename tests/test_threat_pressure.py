@@ -57,11 +57,23 @@ class TestComputeTPF(unittest.TestCase):
         _, tpf = compute_tpf(record)
         self.assertLess(tpf, 1.5)
 
-    def test_kev_always_adds(self):
-        """KEV presence always adds 0.13."""
-        record = self._make_record()
+    def test_kev_bonus_only_for_kev_cves(self):
+        """CISA KEV CVEs (date_added set) receive the +0.13 KEV presence bonus."""
+        record = self._make_record(date_added="2020-01-01")
         score, _ = compute_tpf(record)
         self.assertGreaterEqual(score, 0.13)
+
+    def test_nvd_fallback_no_kev_bonus(self):
+        """NVD keyword fallback CVEs (date_added=None) must NOT receive the KEV bonus."""
+        # Baseline: same record but with KEV date
+        kev_record = self._make_record(date_added="2020-01-01",
+                                       cvss_score=None, epss_score=None)
+        nvd_record = self._make_record(date_added=None,
+                                       cvss_score=None, epss_score=None)
+        kev_score, _ = compute_tpf(kev_record)
+        nvd_score, _ = compute_tpf(nvd_record)
+        # NVD record must score exactly 0.13 less (no KEV bonus)
+        self.assertAlmostEqual(kev_score - nvd_score, 0.13, places=9)
 
     def test_cvss_thresholds(self):
         """CVSS 9+ should contribute more than CVSS 7."""
