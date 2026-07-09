@@ -1,150 +1,263 @@
 # Asset Monitor & Threat Intelligence Pipeline
 
-> **Automated asset fingerprinting and vulnerability intelligence — from a URL to a prioritized, evidence-based threat report.**
+> **Give it a URL. It tells you exactly what's running, what's vulnerable, how dangerous it is, and how an attacker would exploit it.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-87%20passing-brightgreen)]()
-[![Data Sources](https://img.shields.io/badge/Sources-CISA%20KEV%20%7C%20NVD%20%7C%20EPSS%20%7C%20Exploit--DB-orange)]()
+[![Sources](https://img.shields.io/badge/Sources-CISA%20KEV%20%7C%20NVD%20%7C%20EPSS%20%7C%20Exploit--DB-orange)]()
+[![ATT&CK](https://img.shields.io/badge/MITRE-ATT%26CK%20Mapped-red)]()
 
 ---
 
-## What This Does
+## What You Get From a Single Run
 
-Most vulnerability scanners tell you *what* is running. This pipeline tells you *how dangerous it actually is* — and *what the attacker will do with it*.
+Point it at any web asset and it returns a **complete threat picture**:
 
-Starting from a simple target URL, this module:
+```
+[CRITICAL] CVE-2017-12617 | Apache Tomcat → zero.webappsecurity.com
+           | rce | TPF: 1.88 | VERSION CONFIRMED (CPE_RANGE) | 2 PUBLIC EXPLOITS
+```
 
-1. **Discovers** running services, software versions, and technologies (HTTP fingerprinting + Nmap)
-2. **Detects** WAF presence and technology stack (regex signature-based)
-3. **Monitors** for infrastructure changes across scans (port opens, version upgrades, IP changes)
-4. **Fetches** confirmed-exploited vulnerabilities from CISA KEV + enriches with NVD / EPSS / Exploit-DB
-5. **Matches** CVEs to assets using CPE version ranges — preventing false positives by version
-6. **Maps** each vulnerability to a MITRE ATT&CK tactic and technique
-7. **Scores** each CVE-Asset pair with a **Threat Pressure Factor (TPF)** from 9 weighted signals
-8. **Alerts** only when something *changes* (new threat, higher score, escalated level) — zero alert fatigue
+Every result includes:
+
+| Data Point | What It Means |
+|---|---|
+| **Detected Technology** | Vendor + exact version from live HTTP + Nmap |
+| **CVE ID** | Specific vulnerability from CISA KEV or NVD |
+| **CVSS Score** | Technical severity (0–10) |
+| **EPSS Score** | Real-world exploitation probability (ML-based) |
+| **KEV Status** | Confirmed actively exploited by US Govt (CISA) |
+| **Version Confirmed** | Is *your specific version* actually vulnerable? |
+| **CPE Range** | Exact NVD boundary that confirmed the match |
+| **Public Exploit** | Is working attack code downloadable right now? |
+| **MITRE ATT&CK** | Technique + Tactic — *how* the attacker uses it |
+| **CWE Classification** | Root cause weakness type |
+| **TPF Score** | Composite priority score (1.0–2.0) across 9 signals |
+| **Alert Level** | CRITICAL / HIGH / MEDIUM / LOW |
+| **WAF Status** | Is a WAF protecting this asset? |
+
+All of this from running: `python main.py`
 
 ---
 
-## Pipeline Flow
+## Real Output — From Actual Scans
 
 ```
-targets.json
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│  Asset Monitor                                      │
-│  Phase 1 → HTTP Fingerprinting                      │
-│            Server: nginx/1.18.0 → vendor + version  │
-│            Special: Apache-Coyote → Tomcat probe    │
-│  Phase 2 → Nmap Scan (-sV -Pn -n)                  │
-│            Port 80: nginx 1.18.0 │ cpe:/a:nginx:... │
-│  Phase 3 → Tech & WAF Detection (regex patterns)   │
-│  Phase 4 → Change Detection vs previous snapshot   │
-└──────────────────────┬──────────────────────────────┘
-                       │
-                       ▼
-    CISA KEV → NVD (CVSS + CPE + CWE) + EPSS → Exploit-DB
-                       │
-                       ▼
-              Matching Engine
-              Stage 1: Vendor + Product confidence
-              Stage 2: CPE Filter (skip OS/platform CPEs)
-              Stage 3: Version Confirmation (two-pass)
-              Stage 4: KEV Sanity Gate
-                       │
-                       ▼
-           MITRE ATT&CK Mapping (vuln_type → technique)
-                       │
-                       ▼
-           TPF Scoring (9 factors, capped at 2.0)
-                       │
-                       ▼
-    threat_intelligence_output.json  +  alerts.json
+Scanning http://zero.webappsecurity.com...
+  -> Vendor:         Apache
+  -> Product:        Tomcat
+  -> Server:         Apache-Coyote/1.1
+  -> Tomcat version: 7.0.70 (from error-page probe) ✓
+  -> Open ports:     [80, 443, 8080]
+  -> Technologies:   jQuery [high] via html_content
+
+[CPE MATCH] CVE-2017-12617 v7.0.70 == cpe_exact: >=7.0.0 <7.0.82
+
+[CRITICAL] CVE-2017-12617 | Tomcat → zero.webappsecurity.com
+           | rce | TPF: 1.88 [VERSION CPE_RANGE] [EXPLOIT x2]
+
+[CRITICAL] CVE-2025-24813 | Tomcat → zero.webappsecurity.com
+           | rce | TPF: 1.95 [VERSION CPE_RANGE] [EXPLOIT x1]
 ```
 
 ---
 
-## Standalone vs. Integrated Use
-
-This module is **designed to work both ways**:
-
-### ✅ Standalone
-Run it as a complete threat intelligence pipeline on any target. The output (`threat_intelligence_output.json`) is a self-contained, structured report ready for human review or automated tooling.
-
-```bash
-python main.py
-```
-
-### 🔗 Integrated (part of a larger platform)
-The output schema is designed to feed downstream ML models and LLM-based reporting systems. In the [Cyber Risk & Financial Loss Prediction Platform](https://github.com/), this module is the **first stage** of a 4-model pipeline:
+## The Pipeline
 
 ```
-Asset Monitor & Threat Intelligence  (this repo)
-            │
-            ▼  threat_intelligence_output.json
-   AI Penetration Testing Module     (RL/PPO agent)
-            │
-            ▼  pentest results
-   Financial Loss Prediction Model   (LightGBM / CatBoost ensemble)
-            │
-            ▼  EAL estimate
-   LLM Intelligent Assistant         (RAG-based report generation)
-            │
-            ▼  PDF / DOCX / HTML executive report
+targets.json  (your URLs + criticality)
+      │
+      ▼
+┌──────────────────────────────────────────────┐
+│  ASSET MONITOR                               │
+│                                              │
+│  Phase 1 — HTTP Fingerprinting               │
+│    GET request → parse Server/X-Powered-By   │
+│    Cookies → PHP/Java/WordPress signals       │
+│    HTML → meta generators, JS libraries       │
+│                                              │
+│    Special: Apache-Coyote detected?          │
+│    → probe 404 error page → extract real     │
+│      Tomcat version (not connector version)  │
+│                                              │
+│  Phase 2 — Nmap Service Scan                 │
+│    -sV -Pn -n -p 80,443,8080,8443,8000,8888  │
+│    → confirms version + emits CPE string     │
+│                                              │
+│  Phase 3 — Tech & WAF Detection              │
+│    Regex signatures on headers/cookies/HTML  │
+│    → Cloudflare, Akamai, F5, nginx, jQuery…  │
+│                                              │
+│  Phase 4 — Change Detection                  │
+│    vs. previous scan snapshot                │
+│    → NEW_PORT_OPENED / VERSION_CHANGED / …   │
+└──────────────────┬───────────────────────────┘
+                   │
+                   ▼
+          CISA KEV  (1,635 confirmed-exploited CVEs)
+                   │
+                   ▼
+          NVD Enrichment
+            CVSS score + severity
+            CPE version ranges (structured)
+            CWE root cause classification
+                   │
+                   ▼
+          EPSS  (30-day ML exploitation probability)
+                   │
+                   ▼
+          Exploit-DB  (public PoC availability)
+                   │
+                   ▼
+┌──────────────────────────────────────────────┐
+│  MATCHING ENGINE  (4 stages)                 │
+│                                              │
+│  Stage 1 — Vendor + Product confidence       │
+│    "nginx" == "nginx" AND keyword in CVE     │
+│    → HIGH confidence → proceed               │
+│    → LOW confidence  → review list           │
+│                                              │
+│  Stage 2 — CPE Filter                        │
+│    Parse CPE string structurally:            │
+│    cpe:2.3:a:[vendor]:[product]:version      │
+│    Check fields [3] and [4] ONLY             │
+│    Skip :o: (OS-type CPEs)                   │
+│    → prevents F5/Ubuntu CPEs matching nginx  │
+│                                              │
+│  Stage 3 — Version Confirmation (two-pass)   │
+│    Pass 1: CPE range  → integer tuple math   │
+│      (1,18,0) >= (0,6,18) AND < (1,20,1) ✅  │
+│    Pass 2: text search → regex word boundary │
+│      fallback when NVD has no CPE ranges     │
+│                                              │
+│  Stage 4 — KEV Sanity Gate                   │
+│    Version outside ALL product CPE ranges?   │
+│    → route to review (not an alert)          │
+└──────────────────┬───────────────────────────┘
+                   │
+                   ▼
+          MITRE ATT&CK Mapping
+            vuln_type → Technique ID + Tactic
+                   │
+                   ▼
+┌──────────────────────────────────────────────┐
+│  TPF ENGINE  (Threat Pressure Factor)        │
+│                                              │
+│  TPF = 1.0 + Threat Score  (range 1.0–2.0)  │
+│                                              │
+│  CVSS ≥ 9.0            → +0.20               │
+│  EPSS ≥ 0.70           → +0.20               │
+│  KEV confirmed         → +0.13               │
+│  vuln_type = rce       → +0.20               │
+│  Business criticality  → +0.20 (critical)    │
+│  Recency ≤ 30 days     → +0.10               │
+│  Public exploit        → +0.10               │
+│  Ransomware campaign   → +0.07               │
+│  Version CPE_RANGE     → +0.05               │
+│                                              │
+│  Alert only when NEW or ESCALATED            │
+│  (zero duplicate alerts across scans)        │
+└──────────────────┬───────────────────────────┘
+                   │
+                   ▼
+     threat_intelligence_output.json
+     alerts.json
+     asset_changes.json
 ```
-
-The shared `config.py` and SQLite database allow all modules to operate on the same data store. For multi-module concurrent access, migrate `CRD_DB_PATH` to PostgreSQL.
 
 ---
 
-## Key Design Decisions
+## Why Version Confirmation Matters
 
-### False Positive Prevention
-A naive system flags every CVE that shares a vendor name with a detected technology. This module rejects that approach entirely:
+Most scanners match by product name. This pipeline matches by **proven version**:
 
 ```
-CVE-2017-7269 → affects IIS 6.0 ONLY
-Detected:       IIS 8.5
+CVE-2017-7269  →  affects IIS 6.0 ONLY
+Detected:          IIS 8.5
 
-Naive:  "IIS found + CVE found = ALERT"   ← wrong
-Ours:   version 8.5 ≠ 6.0  →  NO ALERT   ← correct
+❌  Naive scanner:  "IIS found + CVE found = ALERT"
+✅  This pipeline:  8.5 ≠ 6.0  →  no alert generated
 ```
 
-Version confirmation uses **NVD CPE ranges** parsed structurally (not substring-matched), converted to integer tuples for accurate comparison. A KEV Sanity Gate additionally rejects high-confidence KEV CVEs where the detected version falls definitively outside all published CPE ranges.
+Version confirmation uses NVD's structured CPE boundaries, parsed as integer tuples:
 
-### Tomcat Version Extraction
-`Server: Apache-Coyote/1.1` reports the Coyote HTTP connector version, not Tomcat's. Using `1.1` for matching would generate false positives across all Tomcat CVEs. The pipeline probes a non-existent path to trigger a 404 error page, which contains the real Tomcat version (e.g., `Apache Tomcat/7.0.70`), and extracts it via regex.
+```python
+"1.18.0"  →  (1, 18, 0)
+"1.20.1"  →  (1, 20, 1)
 
-### Smart Alert Suppression
-Alerts fire only when:
-- A CVE-Asset pair is seen for the first time
-- The TPF score increased since the last scan
-- The alert level escalated (e.g., MEDIUM → CRITICAL)
+(1, 18, 0) >= (0, 6, 18)  ✅
+(1, 18, 0) <  (1, 20, 1)  ✅
+→ version_confirmed = True  [cpe_range]
+```
 
-Same threat, same score → no duplicate alert.
+String comparison would silently fail here (`"1.9" > "1.18"` in strings). Integer tuples don't.
 
 ---
 
-## Threat Pressure Factor (TPF)
+## What the Output Looks Like
 
-TPF is a composite risk multiplier (range: **1.0 → 2.0**):
+Each record in `threat_intelligence_output.json`:
+
+```json
+{
+  "asset_id": "ASSET-006",
+  "asset_vendor": "Apache",
+  "asset_product": "Tomcat",
+  "detected_version": "7.0.70",
+
+  "cve_id": "CVE-2017-12617",
+  "vuln_type": "rce",
+  "cwe_id": "CWE-434",
+  "cwe_name": "Unrestricted File Upload",
+
+  "cvss_score": 9.8,
+  "severity": "CRITICAL",
+  "epss_score": 0.974,
+  "epss_percentile": 0.9999,
+  "known_ransomware": false,
+  "date_added": "2022-03-15",
+  "days_since_kev_added": 843,
+
+  "version_confirmed": true,
+  "confirmation_method": "cpe_range",
+  "cpe_range_matched": ">=7.0.0 <7.0.82",
+
+  "has_public_exploit": true,
+  "exploit_count": 2,
+  "exploit_ids": "42966,43008",
+
+  "attack_technique_id": "T1190",
+  "attack_technique_name": "Exploit Public-Facing Application",
+  "attack_tactic": "Initial Access",
+
+  "is_behind_waf": false,
+  "waf_name": null,
+
+  "threat_score": 0.88,
+  "threat_pressure_factor": 1.88,
+  "alert_level": "CRITICAL"
+}
+```
+
+---
+
+## Threat Pressure Factor (TPF) — 9-Factor Scoring
 
 ```
 TPF = 1.0 + Threat Score    (Threat Score capped at 1.0)
 ```
 
-| Factor | Max Weight | Condition |
+| Factor | Condition | Weight |
 |---|---|---|
-| CVSS Score | +0.20 | ≥ 9.0 Critical |
-| EPSS Score | +0.20 | ≥ 0.70 exploitation probability |
-| KEV Presence | +0.13 | Confirmed in CISA KEV (`date_added` is set) |
-| Vulnerability Type | +0.20 | `rce` > `sqli/auth_bypass` > `traversal/ssrf` > `xss` |
-| Business Criticality | +0.20 | `critical` > `high` > `medium` |
-| Recency | +0.10 | KEV added ≤ 30 days ago |
-| Public Exploit | +0.10 | Exploit-DB confirmed |
-| Known Ransomware | +0.07 | Linked to ransomware campaigns |
-| Version Confirmed | +0.05 | CPE range match only (not text search) |
+| CVSS Score | ≥ 9.0 Critical | +0.20 |
+| EPSS Score | ≥ 0.70 exploitation probability | +0.20 |
+| Vulnerability Type | `rce` | +0.20 |
+| Business Criticality | `critical` | +0.20 |
+| KEV Presence | Confirmed by CISA (date_added set) | +0.13 |
+| Public Exploit | Exploit-DB confirmed | +0.10 |
+| Recency | KEV added ≤ 30 days ago | +0.10 |
+| Ransomware | Linked to active campaigns | +0.07 |
+| Version Confirmed | CPE range match only | +0.05 |
 
 | TPF | Alert Level |
 |---|---|
@@ -153,85 +266,31 @@ TPF = 1.0 + Threat Score    (Threat Score capped at 1.0)
 | ≥ 1.3 | 🟡 MEDIUM |
 | < 1.3 | 🟢 LOW |
 
-**Example output:**
-```
-[CRITICAL] CVE-2024-38475 | Apache HTTP Server → scanme.nmap.org
-           | rce | TPF: 1.78 | VERSION CPE_RANGE
-```
+---
+
+## MITRE ATT&CK Mapping
+
+| vuln_type | Technique | Tactic |
+|---|---|---|
+| `rce` | T1190 — Exploit Public-Facing App | Initial Access |
+| `sqli` | T1190 — Exploit Public-Facing App | Initial Access |
+| `auth_bypass` | T1078 — Valid Accounts | Defense Evasion |
+| `path_traversal` | T1083 — File & Directory Discovery | Discovery |
+| `ssrf` | T1090 — Proxy | Command & Control |
+| `xss` | T1059.007 — JavaScript | Execution |
 
 ---
 
 ## Data Sources
 
-| Source | What it provides |
+| Source | What It Provides |
 |---|---|
-| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | Confirmed actively exploited CVEs (< 1% of all CVEs, 100% real-world) |
-| [NVD](https://nvd.nist.gov) | CVSS scores + structured CPE version ranges + CWE classification |
+| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | 1,635 confirmed actively exploited CVEs — real attacks, not theory |
+| [NVD](https://nvd.nist.gov) | CVSS + structured CPE version ranges + CWE root cause |
 | [EPSS](https://www.first.org/epss/) | ML-based 30-day exploitation probability |
 | [Exploit-DB](https://www.exploit-db.com) | Public proof-of-concept exploit availability |
-| [MITRE ATT&CK](https://attack.mitre.org) | Tactic + technique mapping per vulnerability type |
+| [MITRE ATT&CK](https://attack.mitre.org) | Attacker tactic and technique mapping |
 | [Nmap](https://nmap.org) | Live service version detection + CPE output |
-
----
-
-## MITRE ATT&CK Mapping
-
-| vuln_type | Technique ID | Technique Name | Tactic |
-|---|---|---|---|
-| `rce` | T1190 | Exploit Public-Facing Application | Initial Access |
-| `sqli` | T1190 | Exploit Public-Facing Application | Initial Access |
-| `auth_bypass` | T1078 | Valid Accounts | Defense Evasion |
-| `path_traversal` | T1083 | File and Directory Discovery | Discovery |
-| `ssrf` | T1190 | Exploit Public-Facing Application | Initial Access |
-| `xss` | T1059.007 | JavaScript | Execution |
-
----
-
-## Project Structure
-
-```
-asset-monitor-threat-intelligence/
-│
-├── main.py                 # Full pipeline runner (Steps 0–4)
-├── config.py               # Centralized config (paths, API keys, env vars)
-├── logger.py               # Structured logging (console + rotating file)
-│
-├── asset_monitor.py        # HTTP fingerprinting + Nmap + Tech/WAF + Change Detection
-├── cisa_kev.py             # CISA KEV catalog fetch (with retry + exponential backoff)
-├── nvd_fetch.py            # NVD enrichment: CVSS + EPSS + CPE ranges + CWE
-├── exploit_db.py           # Exploit-DB public exploit check per CVE
-├── mitre_attack.py         # vuln_type → ATT&CK technique mapping
-├── matching.py             # CVE-Asset matching (4-stage CPE version-aware)
-├── threat_pressure.py      # TPF computation + alert generation + suppression
-├── database.py             # SQLite schema + all DB operations (context manager)
-├── check_db.py             # DB inspection utility
-│
-├── tests/                  # 87 unit tests
-│   ├── test_threat_pressure.py
-│   ├── test_matching.py
-│   └── test_config.py
-│
-├── targets.json            # Scan targets (edit this to add your own)
-├── requirements.txt
-└── THREAT_INTELLIGENCE_OUTPUT_GUIDE.md
-```
-
----
-
-## Database Schema (10 Tables)
-
-| Table | Contents |
-|---|---|
-| `assets` | Discovered web assets (vendor, version, IP, WAF status) |
-| `asset_services` | Open ports and services from Nmap |
-| `asset_technologies` | Detected technologies (CMS, JS frameworks, libraries) |
-| `asset_waf_info` | WAF detection per asset |
-| `cisa_kev` | Raw CISA KEV catalog |
-| `enriched_cves` | CVEs with CVSS + EPSS + CPE ranges + CWE |
-| `exploitdb_cves` | Public exploit availability per CVE |
-| `matched_cves` | CVE-Asset matches with ATT&CK mapping |
-| `threat_intelligence` | Final TPF scores with full context |
-| `alerts` | Alert history (deduplication + suppression log) |
 
 ---
 
@@ -241,25 +300,25 @@ asset-monitor-threat-intelligence/
 
 - Python 3.10+
 - [Nmap](https://nmap.org/download.html) installed and on PATH
-- Free [NVD API key](https://nvd.nist.gov/developers/request-an-api-key) (recommended — 10× faster enrichment)
+- Free [NVD API key](https://nvd.nist.gov/developers/request-an-api-key) (10× faster enrichment)
 
 ### Install
 
 ```bash
-git clone https://github.com/your-username/asset-monitor-threat-intelligence.git
-cd asset-monitor-threat-intelligence
+git clone https://github.com/3Basit/Threat_intelligence-Asset_Monitor.git
+cd Threat_intelligence-Asset_Monitor
 pip install -r requirements.txt
 ```
 
 ### Configure Targets
 
-Edit `targets.json` to add the systems you are authorized to test:
+Edit `targets.json`:
 
 ```json
 [
   {
     "target_id": "TARGET-001",
-    "url": "https://your-target.com",
+    "url": "https://your-domain.com",
     "business_criticality": "high",
     "internet_facing": true,
     "authorized": true,
@@ -268,45 +327,88 @@ Edit `targets.json` to add the systems you are authorized to test:
 ]
 ```
 
-> ⚠️ **Important:** Only scan systems you own or have explicit written authorization to test. Set `"authorized": false` to skip a target without removing it.
+> ⚠️ **Only scan systems you own or have explicit written authorization to test.**
+> Targets with `"authorized": false` are silently skipped — the pipeline never touches them.
 
 ### Run
 
 ```bash
-# Set NVD API key for faster enrichment
-$env:NVD_API_KEY="your-key-here"      # PowerShell
-export NVD_API_KEY="your-key-here"    # Linux/Mac
+# Windows PowerShell
+$env:NVD_API_KEY = "your-key-here"
 
-# Run full pipeline
+# Linux / macOS
+export NVD_API_KEY="your-key-here"
+
 python main.py
-
-# Inspect the database
-python check_db.py
 ```
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `NVD_API_KEY` | — | NVD API key (10× rate limit increase) |
+| `NVD_API_KEY` | — | NVD API key (strongly recommended) |
 | `CRD_DB_PATH` | `threat_intelligence.db` | SQLite database path |
 | `CRD_LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR |
-| `CRD_SCAN_DELAY_SECONDS` | `2` | Polite delay between target scans |
-| `CRD_TARGETS_FILE` | `targets.json` | Targets file path |
+| `CRD_SCAN_DELAY_SECONDS` | `2` | Delay between target scans (polite scanning) |
+
+---
+
+## Project Structure
+
+```
+Threat_intelligence-Asset_Monitor/
+│
+├── main.py                 # Pipeline runner (Steps 0–4)
+├── config.py               # Centralized config + env var overrides
+├── logger.py               # Structured logging
+│
+├── asset_monitor.py        # HTTP fingerprinting + Nmap + Tech/WAF + Change Detection
+├── cisa_kev.py             # CISA KEV fetch (retry + exponential backoff)
+├── nvd_fetch.py            # NVD: CVSS + EPSS + CPE ranges + CWE
+├── exploit_db.py           # Exploit-DB public exploit lookup
+├── mitre_attack.py         # vuln_type → ATT&CK mapping
+├── matching.py             # 4-stage CPE version-aware matching engine
+├── threat_pressure.py      # TPF computation + alert generation + suppression
+├── database.py             # SQLite schema (10 tables) + all DB operations
+├── check_db.py             # DB inspection utility
+│
+├── tests/                  # 87 unit tests
+│   ├── test_threat_pressure.py
+│   ├── test_matching.py
+│   └── test_config.py
+│
+├── targets.json            # Scan targets
+├── requirements.txt
+└── THREAT_INTELLIGENCE_OUTPUT_GUIDE.md   # Full output field reference
+```
+
+---
+
+## Database Schema (10 Tables)
+
+| Table | Contents |
+|---|---|
+| `assets` | Live assets: vendor, version, IP, WAF status, confidence |
+| `asset_services` | Open ports and services per asset (from Nmap) |
+| `asset_technologies` | Detected technologies: CMS, frameworks, JS libraries |
+| `asset_waf_info` | WAF name + detection method per asset |
+| `cisa_kev` | Full CISA KEV catalog |
+| `enriched_cves` | CVEs with CVSS + EPSS + CPE ranges + CWE |
+| `exploitdb_cves` | Public exploit IDs per CVE |
+| `matched_cves` | CVE-Asset matches with ATT&CK mapping (high confidence) |
+| `threat_intelligence` | Final TPF scores per CVE-Asset pair |
+| `alerts` | Alert history with suppression log |
 
 ---
 
 ## Tests
 
 ```bash
-# Run all 87 tests
-python -m pytest tests/ -v
-
-# Run a specific module
+python -m pytest tests/ -v          # all 87 tests
 python -m unittest tests.test_matching -v
 ```
 
-Tests cover TPF computation, version parsing, CPE range checking, confidence scoring, alert suppression, and all edge cases.
+Covers: TPF computation, CVSS/EPSS thresholds, alert level logic, version parsing, CPE range checks, confidence scoring, text search fallback, alert suppression, None safety.
 
 ---
 
@@ -314,15 +416,18 @@ Tests cover TPF computation, version parsing, CPE range checking, confidence sco
 
 | File | Description |
 |---|---|
-| `threat_intelligence_output.json` | Full TPF results per CVE-Asset pair |
-| `alerts.json` | Active alerts (suppression-aware) |
-| `asset_changes.json` | Infrastructure change log across scans |
-| `threat_intelligence.db` | SQLite database (all 10 tables) |
+| `threat_intelligence_output.json` | Full results — one record per CVE-Asset pair |
+| `alerts.json` | Active alerts (change-aware, no duplicates) |
+| `asset_changes.json` | Infrastructure change log |
+| `threat_intelligence.db` | SQLite database (10 tables) |
 
-All output files are excluded from the repo via `.gitignore` and recreated on each run.
+All output files are in `.gitignore` and recreated on each run.
 
 ---
 
 ## Legal Notice
 
-Only scan systems you are authorized to test. The default `targets.json` contains publicly available, legally authorized test environments (Nmap's `scanme.nmap.org`, Acunetix demo apps, OWASP Juice Shop, IBM Altoro, PortSwigger Gin & Juice). Do not use this tool against systems without explicit written permission from the system owner.
+Only scan systems you own or have explicit written authorization to test.
+
+The default `targets.json` uses publicly available, legally authorized test environments:
+`scanme.nmap.org` (Nmap official), Acunetix demo apps, OWASP Juice Shop, IBM Altoro Mutual, PortSwigger Gin & Juice, bWAPP, HackThisSite.

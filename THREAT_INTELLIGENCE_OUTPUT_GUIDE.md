@@ -1,10 +1,9 @@
-# Threat Intelligence Output — Documentation for Prediction Model Team
+# Output Field Reference — `threat_intelligence_output.json`
 
-**From:** Threat Intelligence Module
 **File:** `threat_intelligence_output.json` (path configurable via `CRD_TI_OUTPUT_FILE`)
 **Format:** JSON Array — one object per (CVE × Asset) pair
 **Updated:** Every pipeline run (`python main.py`)
-**Configuration:** All pipeline settings (API keys, rate limits, output paths) managed in `config.py` — override via `CRD_*` environment variables
+**Configuration:** All settings in `config.py` — override via `CRD_*` environment variables
 
 ---
 
@@ -40,13 +39,13 @@ threat_intelligence_output.json
 
 ---
 
-## Your Integration Point
+## TPF as a Priority Signal
 
 ```
-Final Risk Probability = base_probability x threat_pressure_factor
+Priority = threat_pressure_factor    (range: 1.0 → 2.0)
 ```
 
-`threat_pressure_factor` ranges from **1.0** (no threat) to **2.0** (maximum threat).
+`threat_pressure_factor` of **1.0** means no supporting threat evidence. **2.0** means all 9 risk signals are confirmed.
 
 ---
 
@@ -102,7 +101,7 @@ Final Risk Probability = base_probability x threat_pressure_factor
 | CWE-502 | Deserialization of Untrusted Data |
 | CWE-918 | Server-Side Request Forgery |
 
-> `cwe_id` and `cwe_name` are informational — not used in TPF calculation, but can be used as categorical features in your model.
+> `cwe_id` and `cwe_name` are informational — not used in TPF calculation, but useful for reporting, dashboards, and risk classification workflows.
 
 ---
 
@@ -156,8 +155,8 @@ Final Risk Probability = base_probability x threat_pressure_factor
 | `text_search` | Version string found in CVE description text (fallback) | **Medium** | +0.00 |
 | `none` | Version not confirmed — either no CPE match or exact CPE version mismatch | Low | +0.00 |
 
-> `version_confirmed=true` with `confirmation_method="text_search"` is medium confidence only. Weight it lower than `cpe_range` in your model.
-> `cpe_range_matched` shows exactly which NVD range or version confirmed the result — use it for audit and explainability.
+> `version_confirmed=true` with `confirmation_method="text_search"` is medium confidence only — treat it as lower certainty than `cpe_range`.
+> `cpe_range_matched` shows the exact NVD boundary that confirmed the result — useful for audit trails and security reports.
 
 ---
 
@@ -272,11 +271,11 @@ alert_level                               = CRITICAL (>=1.7)
 
 > The record remains CRITICAL due to public exploits + EPSS 0.944 + RCE type.
 > It is flagged as **potentially affected** (`version_confirmed=false`), not confirmed vulnerable.
-> Manual verification or Pentest Module confirmation is required.
+> Manual verification is recommended for records where `version_confirmed=false`.
 
 ---
 
-## Integration Example
+## Usage Example
 
 ```python
 import json
@@ -284,27 +283,20 @@ import json
 with open("threat_intelligence_output.json") as f:
     ti_records = json.load(f)
 
+# Sort by TPF — highest priority first
+ti_records.sort(key=lambda r: r["threat_pressure_factor"], reverse=True)
+
 for record in ti_records:
-    tpf    = record["threat_pressure_factor"]   # 1.0-2.0
-    cm     = record["confirmation_method"]       # "cpe_range" / "text_search" / "none"
-    has_ex = record["has_public_exploit"]        # bool
-    cwe    = record["cwe_id"]                    # e.g. "CWE-120" or None
+    tpf    = record["threat_pressure_factor"]   # 1.0–2.0
+    level  = record["alert_level"]               # CRITICAL / HIGH / MEDIUM / LOW
+    cm     = record["confirmation_method"]       # cpe_range / text_search / none
+    cwe    = record["cwe_id"]                    # e.g. "CWE-434" or None
     tactic = record["attack_tactic"]             # e.g. "Initial Access" or None
 
-    # Optional: use confirmation_method as confidence weight
-    confidence_weight = {
-        "cpe_range":   1.0,
-        "text_search": 0.8,
-        "none":        0.6
-    }.get(cm, 0.6)
-
-    base_probability  = your_model.predict(record)
-    final_probability = base_probability * tpf * confidence_weight
-
     print(
-        f"{record['asset_id']} | {record['cve_id']} | "
-        f"CWE={cwe} | ATT&CK={tactic} | "
-        f"TPF={tpf} | final={final_probability:.3f}"
+        f"[{level}] {record['cve_id']} | "
+        f"{record['asset_vendor']} {record['detected_version']} → {record['asset_id']} | "
+        f"CWE={cwe} | ATT&CK={tactic} | TPF={tpf:.2f} | confirm={cm}"
     )
 ```
 
