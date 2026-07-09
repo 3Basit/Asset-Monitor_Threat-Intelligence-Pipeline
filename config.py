@@ -41,12 +41,6 @@ NMAP_WEB_PORTS = _env("NMAP_WEB_PORTS", "80,443,8080,8443,8000,8888")
 # ── Output Files ─────────────────────────────────────────────────────────────
 TI_OUTPUT_FILE = _env("TI_OUTPUT_FILE", os.path.join(_BASE_DIR, "threat_intelligence_output.json"))
 ALERTS_FILE = _env("ALERTS_FILE", os.path.join(_BASE_DIR, "alerts.json"))
-PREDICTION_OUTPUT_FILE = _env("PREDICTION_OUTPUT_FILE", os.path.join(_BASE_DIR, "prediction_output.json"))
-COMPANY_PROFILE_FILE = _env("COMPANY_PROFILE_FILE", os.path.join(_BASE_DIR, "company_profile.json"))
-
-# ── Prediction Model ────────────────────────────────────────────────────────
-MODEL_DIR = _env("MODEL_DIR", os.path.join(_BASE_DIR, "prediction_model", "saved_model"))
-VCDB_DIR = _env("VCDB_DIR", os.path.join(_BASE_DIR, "data", "vcdb", "data", "json", "validated"))
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 LOG_LEVEL = _env("LOG_LEVEL", "INFO")

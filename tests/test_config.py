@@ -13,7 +13,7 @@ class TestConfig(unittest.TestCase):
         import config
         self.assertTrue(hasattr(config, "DB_PATH"))
         self.assertTrue(hasattr(config, "NVD_API_KEY"))
-        self.assertTrue(hasattr(config, "MODEL_DIR"))
+        self.assertTrue(hasattr(config, "TI_OUTPUT_FILE"))
 
     def test_db_path_default(self):
         import config

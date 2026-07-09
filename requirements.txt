@@ -1,16 +1,8 @@
-# ── Threat Intelligence Module ──
+# Threat Intelligence & Asset Monitor
+# requirements.txt
+
+# ── Core ─────────────────────────────────────────────────────────────────────
 requests>=2.31
 
-# ── Testing ──
+# ── Testing ──────────────────────────────────────────────────────────────────
 pytest>=7.0
-
-# ── Prediction Model (FAIR Engine) ──
-pandas>=2.0
-scikit-learn>=1.3
-xgboost>=2.0
-lightgbm>=4.0
-joblib>=1.3
-numpy>=1.26
-shap>=0.43
-mapie>=0.9,<1.0
-matplotlib>=3.8
