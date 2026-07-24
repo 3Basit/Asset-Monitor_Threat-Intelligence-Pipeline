@@ -1,3 +1,33 @@
+"""
+threat_pressure.py — Threat Pressure Factor (TPF) Engine
+=========================================================
+TPF is a *prioritization multiplier*, NOT a probability.
+Range: 1.0 (no threat signal) -> 2.0 (all 9 signals confirmed).
+
+Formula:
+    TPF = 1.0 + threat_score
+    threat_score = sum of factor contributions (capped at 1.0)
+
+Weight Rationale (expert-weighted heuristic, inspired by SSVC):
+    CVSS           +0.20 max  Severity of the vulnerability
+    EPSS           +0.20 max  Empirical exploitation probability (FIRST.org)
+    vuln_type      +0.20 max  Attack impact class (RCE > SQLi > XSS ...)
+    criticality    +0.20 max  Asset business value to the organization
+    KEV            +0.13      CISA confirmed active exploitation (binary)
+    public_exploit +0.10      PoC availability increases attacker capability
+    recency        +0.10 max  Newer CVEs have less time for patching
+    ransomware     +0.07      Known ransomware association raises urgency
+    version_conf   +0.05      CPE range match adds detection confidence
+
+Design rationale:
+    Primary dimensions (0.20 each) are direct exploitation signals.
+    KEV (0.13) is a binary confirmation signal, not a severity signal.
+    Public exploit (0.10) is an attacker-capability indicator.
+
+Interpretation:
+    TPF = 1.68 means this CVE should be prioritized ~1.68x more than a
+    baseline CVE with no threat signals. It is NOT a 68% breach probability.
+"""
 import json
 from datetime import datetime, timezone
 
@@ -49,7 +79,7 @@ def compute_tpf(record):
         elif epss >= 0.4: score += 0.13
         elif epss >= 0.1: score += 0.07
 
-    if record.get("date_added"):  # Only for CISA KEV CVEs — NVD keyword fallback CVEs have date_added=None
+    if record.get("date_added"):  # Only for CISA KEV CVEs â€” NVD keyword fallback CVEs have date_added=None
         score += 0.13
 
     if record.get("known_ransomware"):
@@ -67,7 +97,7 @@ def compute_tpf(record):
     except Exception:
         pass
 
-    # Version confirmation bonus — only for CPE-range confirmed (high confidence)
+    # Version confirmation bonus â€” only for CPE-range confirmed (high confidence)
     # text_search confirmation does NOT add bonus (medium confidence only)
     if record.get("version_confirmed") and record.get("confirmation_method") == "cpe_range":
         score += 0.05
@@ -92,7 +122,7 @@ def run_threat_pressure():
     matches = get_matched_cves()
 
     if not matches:
-        log.warning("matched_cves table is empty — run Step 3 (matching) first.")
+        log.warning("matched_cves table is empty â€” run Step 3 (matching) first.")
         return
 
     previous_state = get_previous_ti_state()

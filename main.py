@@ -30,7 +30,11 @@ def main():
     # ── Step 1: CISA KEV ─────────────────────────────────────────
     print("=" * 50)
     print("Step 1: Fetching CISA KEV...")
-    save_cisa_kev(fetch_cisa_kev())
+    kev_data = fetch_cisa_kev()
+    if kev_data is None:
+        print("  -> CISA KEV feed unchanged (ETag cached) — skipping save")
+    else:
+        save_cisa_kev(kev_data)
 
     # ── Step 2: NVD + EPSS + CPE ranges ──────────────────────────
     print("=" * 50)
@@ -58,9 +62,5 @@ def main():
     print("Pipeline complete!")
 
 
-
-
-
 if __name__ == "__main__":
     main()
-
